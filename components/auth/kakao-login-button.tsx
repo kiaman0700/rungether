@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { clearAuthFlow, markAuthFlowStarted } from "@/lib/auth-flow";
+import { AuthMode, clearAuthFlow, markAuthFlowStarted } from "@/lib/auth-flow";
 import { getSupabaseClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
@@ -12,13 +12,15 @@ type KakaoLoginButtonProps = {
   className?: string;
   compact?: boolean;
   label?: string;
+  mode?: AuthMode;
 };
 
 export function KakaoLoginButton({
   appearance = "kakao",
   className,
   compact = false,
-  label = "카카오로 시작하기"
+  label = "카카오로 시작하기",
+  mode = "signup"
 }: KakaoLoginButtonProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -36,7 +38,7 @@ export function KakaoLoginButton({
 
     clearAuthFlow();
     await supabase.auth.signOut({ scope: "local" });
-    markAuthFlowStarted();
+    markAuthFlowStarted(mode);
     const redirectTo = new URL("/auth/callback", window.location.origin).toString();
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "kakao",

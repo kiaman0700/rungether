@@ -58,9 +58,21 @@ export function AuthCallback() {
         }
 
         if (session) {
+          const { data: profile } = await (supabase.from("users") as any)
+            .select("onboarding_completed")
+            .eq("id", session.user.id)
+            .maybeSingle();
+
+          if (profile?.onboarding_completed) {
+            clearAuthFlow();
+            setStatus("로그인이 완료되었습니다.");
+            router.replace("/");
+            return;
+          }
+
           markAuthFlowConfirmed();
-          setStatus("로그인이 완료되었습니다. RUNGETHER 아이디를 확인합니다.");
-          router.replace("/onboarding");
+          setStatus("카카오 인증이 완료되었습니다. RUNGETHER 회원가입을 진행합니다.");
+          router.replace("/signup");
           return;
         }
 
@@ -74,9 +86,28 @@ export function AuthCallback() {
         return;
       }
 
+      const { data: userData } = await supabase.auth.getUser();
+      if (!userData.user) {
+        clearAuthFlow();
+        setStatus("카카오 계정을 확인하지 못했습니다. 다시 로그인해 주세요.");
+        return;
+      }
+
+      const { data: profile } = await (supabase.from("users") as any)
+        .select("onboarding_completed")
+        .eq("id", userData.user.id)
+        .maybeSingle();
+
+      if (profile?.onboarding_completed) {
+        clearAuthFlow();
+        setStatus("로그인이 완료되었습니다.");
+        router.replace("/");
+        return;
+      }
+
       markAuthFlowConfirmed();
-      setStatus("로그인이 완료되었습니다. RUNGETHER 아이디를 확인합니다.");
-      router.replace("/onboarding");
+      setStatus("카카오 인증이 완료되었습니다. RUNGETHER 회원가입을 진행합니다.");
+      router.replace("/signup");
     }
 
     void finishLogin();

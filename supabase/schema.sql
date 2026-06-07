@@ -144,6 +144,22 @@ create table if not exists public.chats (
   created_at timestamptz not null default now()
 );
 
+alter table public.chats
+  add column if not exists is_public boolean not null default false,
+  add column if not exists created_by uuid references public.users(id) on delete set null,
+  add column if not exists direct_key text;
+
+create unique index if not exists chats_direct_key_unique
+on public.chats (direct_key)
+where direct_key is not null;
+
+create table if not exists public.chat_members (
+  chat_id uuid not null references public.chats(id) on delete cascade,
+  user_id uuid not null references public.users(id) on delete cascade,
+  joined_at timestamptz not null default now(),
+  primary key (chat_id, user_id)
+);
+
 create table if not exists public.messages (
   id uuid primary key default gen_random_uuid(),
   chat_id uuid not null references public.chats(id) on delete cascade,
@@ -162,6 +178,32 @@ create table if not exists public.notifications (
   payload jsonb not null default '{}',
   read_at timestamptz,
   created_at timestamptz not null default now()
+);
+
+create table if not exists public.stories (
+  id uuid primary key default gen_random_uuid(),
+  author_id uuid not null references public.users(id) on delete cascade,
+  media_url text not null,
+  caption text,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default (now() + interval '24 hours')
+);
+
+create table if not exists public.group_runs (
+  id uuid primary key default gen_random_uuid(),
+  host_id uuid not null references public.users(id) on delete cascade,
+  title text not null,
+  meeting_place text not null,
+  starts_at timestamptz not null,
+  max_members integer not null default 10 check (max_members between 2 and 100),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.group_run_members (
+  group_run_id uuid not null references public.group_runs(id) on delete cascade,
+  user_id uuid not null references public.users(id) on delete cascade,
+  joined_at timestamptz not null default now(),
+  primary key (group_run_id, user_id)
 );
 
 create table if not exists public.emergency_reports (
@@ -183,9 +225,6 @@ create table if not exists public.live_locations (
   updated_at timestamptz not null default now()
 );
 
-alter table public.chats
-  add column if not exists is_public boolean not null default false;
-
 insert into public.chats (id, title, is_public)
 values ('00000000-0000-0000-0000-000000000001', 'RUNGETHER 라운지', true)
 on conflict (id) do update
@@ -204,8 +243,12 @@ alter table public.posts enable row level security;
 alter table public.comments enable row level security;
 alter table public.likes enable row level security;
 alter table public.chats enable row level security;
+alter table public.chat_members enable row level security;
 alter table public.messages enable row level security;
 alter table public.notifications enable row level security;
+alter table public.stories enable row level security;
+alter table public.group_runs enable row level security;
+alter table public.group_run_members enable row level security;
 alter table public.emergency_reports enable row level security;
 alter table public.live_locations enable row level security;
 
@@ -240,6 +283,67 @@ on public.notifications for select
 to authenticated
 using (auth.uid() = user_id);
 
+drop policy if exists "Authenticated users can read active stories" on public.stories;
+create policy "Authenticated users can read active stories"
+on public.stories for select
+to authenticated
+using (expires_at > now());
+
+drop policy if exists "Users can create their own stories" on public.stories;
+create policy "Users can create their own stories"
+on public.stories for insert
+to authenticated
+with check (auth.uid() = author_id);
+
+drop policy if exists "Users can delete their own stories" on public.stories;
+create policy "Users can delete their own stories"
+on public.stories for delete
+to authenticated
+using (auth.uid() = author_id);
+
+drop policy if exists "Authenticated users can read group runs" on public.group_runs;
+create policy "Authenticated users can read group runs"
+on public.group_runs for select
+to authenticated
+using (true);
+
+drop policy if exists "Users can create group runs" on public.group_runs;
+create policy "Users can create group runs"
+on public.group_runs for insert
+to authenticated
+with check (auth.uid() = host_id);
+
+drop policy if exists "Hosts can update group runs" on public.group_runs;
+create policy "Hosts can update group runs"
+on public.group_runs for update
+to authenticated
+using (auth.uid() = host_id)
+with check (auth.uid() = host_id);
+
+drop policy if exists "Hosts can delete group runs" on public.group_runs;
+create policy "Hosts can delete group runs"
+on public.group_runs for delete
+to authenticated
+using (auth.uid() = host_id);
+
+drop policy if exists "Authenticated users can read group run members" on public.group_run_members;
+create policy "Authenticated users can read group run members"
+on public.group_run_members for select
+to authenticated
+using (true);
+
+drop policy if exists "Users can join group runs" on public.group_run_members;
+create policy "Users can join group runs"
+on public.group_run_members for insert
+to authenticated
+with check (auth.uid() = user_id);
+
+drop policy if exists "Users can leave group runs" on public.group_run_members;
+create policy "Users can leave group runs"
+on public.group_run_members for delete
+to authenticated
+using (auth.uid() = user_id);
+
 drop policy if exists "Users can create friend requests" on public.friends;
 create policy "Users can create friend requests"
 on public.friends for insert
@@ -271,6 +375,12 @@ on public.runs for all
 to authenticated
 using (auth.uid() = user_id)
 with check (auth.uid() = user_id);
+
+drop policy if exists "Authenticated users can read shared runs" on public.runs;
+create policy "Authenticated users can read shared runs"
+on public.runs for select
+to authenticated
+using (visibility in ('public', 'friends') or auth.uid() = user_id);
 
 drop policy if exists "Users manage tracks for their own runs" on public.run_tracks;
 create policy "Users manage tracks for their own runs"
@@ -372,31 +482,93 @@ using (owner_id = auth.uid())
 with check (owner_id = auth.uid());
 
 drop policy if exists "Authenticated users can read public chats" on public.chats;
-create policy "Authenticated users can read public chats"
+drop policy if exists "Users can read available chats" on public.chats;
+create policy "Users can read available chats"
 on public.chats for select
 to authenticated
-using (is_public);
+using (
+  is_public
+  or created_by = auth.uid()
+  or exists (
+    select 1 from public.chat_members
+    where chat_members.chat_id = chats.id
+      and chat_members.user_id = auth.uid()
+  )
+);
+
+drop policy if exists "Users can create direct chats" on public.chats;
+create policy "Users can create direct chats"
+on public.chats for insert
+to authenticated
+with check (
+  auth.uid() = created_by
+  and not is_public
+  and direct_key is not null
+);
+
+drop policy if exists "Authenticated users can read chat members" on public.chat_members;
+create policy "Authenticated users can read chat members"
+on public.chat_members for select
+to authenticated
+using (true);
+
+drop policy if exists "Creators can add direct chat members" on public.chat_members;
+create policy "Creators can add direct chat members"
+on public.chat_members for insert
+to authenticated
+with check (
+  auth.uid() = user_id
+  or exists (
+    select 1 from public.chats
+    where chats.id = chat_members.chat_id
+      and chats.created_by = auth.uid()
+  )
+);
+
+drop policy if exists "Users can leave direct chats" on public.chat_members;
+create policy "Users can leave direct chats"
+on public.chat_members for delete
+to authenticated
+using (auth.uid() = user_id);
 
 drop policy if exists "Authenticated users can read public chat messages" on public.messages;
-create policy "Authenticated users can read public chat messages"
+drop policy if exists "Users can read available chat messages" on public.messages;
+create policy "Users can read available chat messages"
 on public.messages for select
 to authenticated
 using (
   exists (
     select 1 from public.chats
-    where chats.id = messages.chat_id and chats.is_public
+    where chats.id = messages.chat_id
+      and (
+        chats.is_public
+        or exists (
+          select 1 from public.chat_members
+          where chat_members.chat_id = chats.id
+            and chat_members.user_id = auth.uid()
+        )
+      )
   )
 );
 
 drop policy if exists "Users can send public chat messages" on public.messages;
-create policy "Users can send public chat messages"
+drop policy if exists "Users can send available chat messages" on public.messages;
+create policy "Users can send available chat messages"
 on public.messages for insert
 to authenticated
 with check (
   auth.uid() = sender_id
   and exists (
     select 1 from public.chats
-    where chats.id = messages.chat_id and chats.is_public
+    where chats.id = messages.chat_id
+      and (
+        chats.is_public
+        or exists (
+          select 1 from public.chat_members
+          where chat_members.chat_id = chats.id
+            and chat_members.user_id = auth.uid()
+        )
+      )
   )
 );
 
@@ -464,6 +636,19 @@ set public = true,
     file_size_limit = excluded.file_size_limit,
     allowed_mime_types = excluded.allowed_mime_types;
 
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'social-media',
+  'social-media',
+  true,
+  10485760,
+  array['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+)
+on conflict (id) do update
+set public = true,
+    file_size_limit = excluded.file_size_limit,
+    allowed_mime_types = excluded.allowed_mime_types;
+
 drop policy if exists "Avatar images are publicly readable" on storage.objects;
 create policy "Avatar images are publicly readable"
 on storage.objects for select
@@ -497,5 +682,28 @@ on storage.objects for delete
 to authenticated
 using (
   bucket_id = 'avatars'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+drop policy if exists "Social media is publicly readable" on storage.objects;
+create policy "Social media is publicly readable"
+on storage.objects for select
+using (bucket_id = 'social-media');
+
+drop policy if exists "Users can upload their own social media" on storage.objects;
+create policy "Users can upload their own social media"
+on storage.objects for insert
+to authenticated
+with check (
+  bucket_id = 'social-media'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+drop policy if exists "Users can delete their own social media" on storage.objects;
+create policy "Users can delete their own social media"
+on storage.objects for delete
+to authenticated
+using (
+  bucket_id = 'social-media'
   and (storage.foldername(name))[1] = auth.uid()::text
 );

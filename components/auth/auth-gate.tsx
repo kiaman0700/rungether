@@ -5,6 +5,7 @@ import { Route } from "lucide-react";
 
 import { KakaoLoginButton } from "@/components/auth/kakao-login-button";
 import { RungetherApp } from "@/components/rungether-app";
+import { cancelIncompleteKakaoSignup } from "@/lib/kakao-auth";
 import { getSupabaseClient } from "@/lib/supabase";
 
 type GateState = "loading" | "signed-out" | "ready";
@@ -31,12 +32,13 @@ export function AuthGate() {
         return;
       }
 
-      const { data: profile } = await (supabase!.from("users") as any)
+      const { data: profile, error } = await (supabase!.from("users") as any)
         .select("onboarding_completed")
         .eq("id", userId)
         .maybeSingle();
 
-      if (!profile?.onboarding_completed) {
+      if (!error && !profile?.onboarding_completed) {
+        await cancelIncompleteKakaoSignup(supabase!);
         setState("signed-out");
         return;
       }
@@ -112,7 +114,8 @@ function AuthLanding() {
         <div className="px-6 py-6">
           <KakaoLoginButton
             className="[&>button]:w-full"
-            label="카카오톡으로 시작하기"
+            label="카카오톡으로 회원가입"
+            mode="signup"
           />
           <div className="my-4 flex items-center gap-3 text-[11px] font-bold text-muted">
             <span className="h-px flex-1 bg-border" />
@@ -122,7 +125,8 @@ function AuthLanding() {
           <KakaoLoginButton
             appearance="outline"
             className="[&>button]:w-full"
-            label="기존 계정으로 로그인"
+            label="카카오톡으로 로그인"
+            mode="login"
           />
           <p className="mt-4 text-center text-[11px] font-semibold leading-5 text-muted">
             계속하면 서비스 이용을 위한 카카오 인증과 계정 생성을 진행합니다.

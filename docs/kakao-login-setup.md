@@ -24,6 +24,12 @@ https://<SUPABASE_PROJECT_REF>.supabase.co/auth/v1/callback
 
 RUNGETHER 아이디는 카카오 닉네임과 별도로 회원가입 마지막 단계에서 사용자가 직접 만듭니다.
 
+카카오 동의 화면은 해당 카카오 계정이 RUNGETHER 앱에 처음 연결될 때
+표시됩니다. 이미 한 번 동의한 테스트 계정은 카카오 정책상 같은 동의
+화면이 반복 표시되지 않고 인증 후 RUNGETHER 회원가입 단계로 돌아옵니다.
+처음부터 다시 시험하려면 카카오계정의 `연결된 서비스 관리`에서
+RUNGETHER 연결을 해제한 뒤 회원가입을 다시 진행합니다.
+
 ### Supabase
 
 `Authentication > Providers > Kakao`에서:

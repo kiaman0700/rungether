@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
-import { AtSign, Camera, Check, Loader2, SkipForward, UserRound } from "lucide-react";
+import { AtSign, Camera, Check, Loader2, UserRound, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
@@ -32,11 +32,7 @@ export function ProfileForm({ mode }: ProfileFormProps) {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
-  const [status, setStatus] = useState(
-    mode === "onboarding"
-      ? "아이디는 필수이고 나머지 정보는 선택입니다."
-      : "변경할 프로필 정보를 입력하세요."
-  );
+  const [status, setStatus] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isReady, setIsReady] = useState(false);
 
@@ -122,6 +118,14 @@ export function ProfileForm({ mode }: ProfileFormProps) {
 
     setAvatarFile(file);
     setAvatarPreview(URL.createObjectURL(file));
+    setStatus("");
+  }
+
+  function removeAvatar() {
+    setAvatarFile(null);
+    setAvatarUrl(null);
+    setAvatarPreview(null);
+    setStatus("");
   }
 
   async function uploadAvatar() {
@@ -158,7 +162,7 @@ export function ProfileForm({ mode }: ProfileFormProps) {
     }
 
     setIsLoading(true);
-    setStatus("아이디와 프로필을 저장하고 있습니다.");
+    setStatus("프로필을 저장하고 있습니다.");
 
     const { data: duplicate } = await (supabase.from("users") as any)
       .select("id")
@@ -205,120 +209,134 @@ export function ProfileForm({ mode }: ProfileFormProps) {
   }
 
   return (
-    <main className="min-h-screen bg-surface px-4 py-8 sm:py-12">
-      <section className="mx-auto w-full max-w-[560px] overflow-hidden rounded-md border border-border bg-white shadow-soft">
-        <div className="border-b border-border px-5 py-6 sm:px-7">
-          <p className="text-xs font-black text-primary">
-            {mode === "onboarding" ? "프로필 설정" : "프로필 편집"}
-          </p>
-          <h1 className="mt-2 text-2xl font-black">
-            {mode === "onboarding" ? "RUNGETHER에서 어떻게 보일까요?" : "내 프로필 관리"}
-          </h1>
-          <p className="mt-2 text-sm font-semibold leading-6 text-muted">
-            아이디만 필수입니다. 이름, 사진, 소개는 지금 입력하지 않아도 됩니다.
-          </p>
-        </div>
+    <main className="min-h-screen bg-white text-ink sm:bg-surface sm:px-4 sm:py-10">
+      <section className="mx-auto min-h-screen w-full max-w-[600px] bg-white sm:min-h-0 sm:overflow-hidden sm:rounded-md sm:border sm:border-border sm:shadow-soft">
+        <form onSubmit={submit}>
+          <header className="sticky top-0 z-10 grid h-14 grid-cols-[88px_1fr_88px] items-center border-b border-border bg-white/95 px-3 backdrop-blur">
+            <button
+              className="justify-self-start text-sm font-bold"
+              disabled={isLoading}
+              onClick={() => router.replace("/")}
+              type="button"
+            >
+              취소
+            </button>
+            <h1 className="text-center text-base font-black">
+              {mode === "onboarding" ? "프로필 만들기" : "프로필 편집"}
+            </h1>
+            <button
+              className="inline-flex items-center justify-self-end text-sm font-black text-primary disabled:opacity-50"
+              disabled={!isReady || isLoading}
+              type="submit"
+            >
+              {isLoading ? <Loader2 className="animate-spin" size={18} /> : "완료"}
+            </button>
+          </header>
 
-        <form className="grid gap-5 px-5 py-6 sm:px-7" onSubmit={submit}>
-          <div className="flex items-center gap-4">
-            <div className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-md bg-zinc-100 text-muted">
-              {avatarPreview ? (
-                <img
-                  alt="프로필 미리보기"
-                  className="size-full object-cover"
-                  src={avatarPreview}
+          <div className="px-5 py-7 sm:px-8">
+            <div className="flex flex-col items-center">
+              <div className="relative grid size-24 place-items-center overflow-hidden rounded-full bg-zinc-100 text-muted">
+                {avatarPreview ? (
+                  <img
+                    alt="프로필 미리보기"
+                    className="size-full object-cover"
+                    src={avatarPreview}
+                  />
+                ) : (
+                  <UserRound size={38} />
+                )}
+                {!avatarPreview ? (
+                  <span className="absolute bottom-1 right-1 grid size-7 place-items-center rounded-full border-2 border-white bg-primary text-white">
+                    <Camera size={14} />
+                  </span>
+                ) : null}
+              </div>
+              <label className="mt-3 cursor-pointer text-sm font-black text-primary hover:underline">
+                프로필 사진 변경
+                <input
+                  accept="image/*"
+                  className="sr-only"
+                  disabled={!isReady || isLoading}
+                  onChange={selectAvatar}
+                  type="file"
                 />
-              ) : (
-                <UserRound size={30} />
-              )}
+              </label>
+              {avatarPreview ? (
+                <button
+                  className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-danger"
+                  disabled={isLoading}
+                  onClick={removeAvatar}
+                  type="button"
+                >
+                  <X size={14} />
+                  현재 사진 삭제
+                </button>
+              ) : null}
             </div>
-            <label className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md border border-border bg-white px-3 text-sm font-bold hover:bg-zinc-50">
-              <Camera size={17} />
-              사진 선택
-              <input
-                accept="image/*"
-                className="sr-only"
-                disabled={!isReady || isLoading}
-                onChange={selectAvatar}
-                type="file"
-              />
-            </label>
-          </div>
 
-          <label className="grid gap-2">
-            <span className="text-sm font-bold">
-              아이디 <span className="text-danger">필수</span>
-            </span>
-            <div className="grid h-12 grid-cols-[auto_1fr] items-center gap-2 rounded-md border border-border px-3">
-              <AtSign className="text-muted" size={18} />
-              <input
-                autoCapitalize="none"
-                autoCorrect="off"
-                className="min-w-0 bg-transparent text-sm font-bold outline-none"
-                disabled={!isReady || isLoading}
-                maxLength={20}
-                onChange={(event) => setHandle(event.target.value)}
-                placeholder="rungether.id"
-                value={handle}
-              />
+            <div className="mt-8 divide-y divide-border border-y border-border">
+              <label className="grid gap-2 py-4 sm:grid-cols-[110px_1fr] sm:items-center sm:gap-5">
+                <span className="text-sm font-bold">이름</span>
+                <input
+                  className="min-w-0 border-0 bg-transparent text-sm font-semibold outline-none placeholder:text-zinc-400"
+                  disabled={!isReady || isLoading}
+                  maxLength={30}
+                  onChange={(event) => setDisplayName(event.target.value)}
+                  placeholder="이름"
+                  value={displayName}
+                />
+              </label>
+
+              <label className="grid gap-2 py-4 sm:grid-cols-[110px_1fr] sm:items-center sm:gap-5">
+                <span className="text-sm font-bold">사용자 이름</span>
+                <div className="flex min-w-0 items-center gap-2">
+                  <AtSign className="shrink-0 text-muted" size={17} />
+                  <input
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    className="min-w-0 flex-1 border-0 bg-transparent text-sm font-semibold outline-none placeholder:text-zinc-400"
+                    disabled={!isReady || isLoading}
+                    maxLength={20}
+                    onChange={(event) => setHandle(event.target.value)}
+                    placeholder="rungether.id"
+                    value={handle}
+                  />
+                </div>
+              </label>
+
+              <label className="grid gap-2 py-4 sm:grid-cols-[110px_1fr] sm:gap-5">
+                <span className="text-sm font-bold sm:pt-1">소개</span>
+                <div>
+                  <textarea
+                    className="min-h-24 w-full resize-none border-0 bg-transparent text-sm font-semibold leading-6 outline-none placeholder:text-zinc-400"
+                    disabled={!isReady || isLoading}
+                    maxLength={160}
+                    onChange={(event) => setBio(event.target.value)}
+                    placeholder="러닝 목표나 좋아하는 코스를 소개해 보세요."
+                    value={bio}
+                  />
+                  <p className="text-right text-xs font-semibold text-muted">
+                    {bio.length}/160
+                  </p>
+                </div>
+              </label>
             </div>
-            <span className="text-xs font-semibold text-muted">
-              영문 소문자, 숫자, 점, 밑줄만 사용할 수 있습니다.
-            </span>
-          </label>
 
-          <label className="grid gap-2">
-            <span className="text-sm font-bold">표시 이름 <span className="text-muted">선택</span></span>
-            <input
-              className="h-12 rounded-md border border-border px-3 text-sm font-semibold outline-none focus:border-primary"
-              disabled={!isReady || isLoading}
-              maxLength={30}
-              onChange={(event) => setDisplayName(event.target.value)}
-              placeholder="친구들에게 보일 이름"
-              value={displayName}
-            />
-          </label>
+            <p className="mt-3 min-h-5 text-xs font-bold leading-5 text-danger" role="status">
+              {status}
+            </p>
 
-          <label className="grid gap-2">
-            <span className="text-sm font-bold">소개 <span className="text-muted">선택</span></span>
-            <textarea
-              className="min-h-24 resize-y rounded-md border border-border p-3 text-sm font-semibold outline-none focus:border-primary"
-              disabled={!isReady || isLoading}
-              maxLength={160}
-              onChange={(event) => setBio(event.target.value)}
-              placeholder="러닝 목표나 좋아하는 코스를 소개해 보세요."
-              value={bio}
-            />
-            <span className="text-right text-xs font-semibold text-muted">{bio.length}/160</span>
-          </label>
-
-          <p className="text-xs font-bold leading-5 text-muted" role="status">
-            {status}
-          </p>
-
-          <div className="grid gap-2 sm:grid-cols-2">
             {mode === "onboarding" ? (
               <Button
+                className="mt-3 w-full"
                 disabled={!isReady || isLoading}
                 onClick={() => void saveProfile(true)}
                 variant="secondary"
               >
-                <SkipForward size={18} />
-                선택 정보 건너뛰기
+                <Check size={18} />
+                아이디만 저장하고 시작
               </Button>
-            ) : (
-              <Button
-                disabled={isLoading}
-                onClick={() => router.replace("/")}
-                variant="secondary"
-              >
-                취소
-              </Button>
-            )}
-            <Button disabled={!isReady || isLoading} type="submit">
-              {isLoading ? <Loader2 className="animate-spin" size={18} /> : <Check size={18} />}
-              {mode === "onboarding" ? "저장하고 시작" : "변경사항 저장"}
-            </Button>
+            ) : null}
           </div>
         </form>
       </section>

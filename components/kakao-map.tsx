@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { LocateFixed, MapPinned, RefreshCw } from "lucide-react";
+import { Activity, LocateFixed, MapPinned, Pause, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -9,10 +9,19 @@ import { cn } from "@/lib/utils";
 export type MapPoint = {
   latitude: number;
   longitude: number;
+  accuracy?: number;
+  recordedAt?: string;
+  speedMps?: number | null;
 };
+
+export type LocationStatus = "idle" | "requesting" | "ready" | "denied" | "unavailable";
 
 type KakaoMapProps = {
   className?: string;
+  isPaused?: boolean;
+  isRunning?: boolean;
+  locationStatus?: LocationStatus;
+  onLocate?: () => void;
   points?: MapPoint[];
 };
 
@@ -74,13 +83,23 @@ function loadKakaoMaps(appKey: string) {
   return kakaoLoader;
 }
 
-export function KakaoMap({ className, points = [] }: KakaoMapProps) {
+export function KakaoMap({
+  className,
+  isPaused = false,
+  isRunning = false,
+  locationStatus = "idle",
+  onLocate,
+  points = []
+}: KakaoMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
-  const markerRef = useRef<any>(null);
+  const currentMarkerRef = useRef<any>(null);
+  const accuracyCircleRef = useRef<any>(null);
   const polylineRef = useRef<any>(null);
+  const centeredOnceRef = useRef(false);
   const [status, setStatus] = useState<"loading" | "ready" | "error" | "missing">("loading");
   const [errorMessage, setErrorMessage] = useState("");
+  const [following, setFollowing] = useState(true);
   const [origin, setOrigin] = useState("");
   const [attempt, setAttempt] = useState(0);
 
@@ -104,28 +123,21 @@ export function KakaoMap({ className, points = [] }: KakaoMapProps) {
         }
 
         const initial = points.at(-1) ?? {
-          latitude: 37.5283,
-          longitude: 126.9328
+          latitude: 37.5665,
+          longitude: 126.978
         };
         try {
           const map = new kakao.maps.Map(containerRef.current, {
             center: new kakao.maps.LatLng(initial.latitude, initial.longitude),
-            level: 5
+            level: points.length ? 4 : 7
           });
 
-          map.addControl(
-            new kakao.maps.MapTypeControl(),
-            kakao.maps.ControlPosition.TOPRIGHT
-          );
           map.addControl(
             new kakao.maps.ZoomControl(),
             kakao.maps.ControlPosition.RIGHT
           );
+          kakao.maps.event.addListener(map, "dragstart", () => setFollowing(false));
           mapRef.current = map;
-          markerRef.current = new kakao.maps.Marker({
-            map,
-            position: new kakao.maps.LatLng(initial.latitude, initial.longitude)
-          });
           polylineRef.current = new kakao.maps.Polyline({
             map,
             path: [],
@@ -134,6 +146,7 @@ export function KakaoMap({ className, points = [] }: KakaoMapProps) {
             strokeStyle: "solid",
             strokeWeight: 7
           });
+          window.setTimeout(() => map.relayout(), 0);
           setStatus("ready");
         } catch (error) {
           throw new Error(
@@ -170,18 +183,65 @@ export function KakaoMap({ className, points = [] }: KakaoMapProps) {
     );
     const currentPosition = path.at(-1);
 
-    markerRef.current?.setPosition(currentPosition);
+    if (!currentMarkerRef.current) {
+      const marker = document.createElement("div");
+      marker.setAttribute("aria-label", "현재 위치");
+      marker.style.width = isRunning ? "22px" : "18px";
+      marker.style.height = isRunning ? "22px" : "18px";
+      marker.style.border = "4px solid white";
+      marker.style.borderRadius = "9999px";
+      marker.style.background = "#10b981";
+      marker.style.boxShadow = isRunning
+        ? "0 0 0 8px rgba(16,185,129,.22), 0 3px 12px rgba(0,0,0,.28)"
+        : "0 0 0 5px rgba(16,185,129,.18), 0 3px 10px rgba(0,0,0,.24)";
+      currentMarkerRef.current = new kakao.maps.CustomOverlay({
+        content: marker,
+        map: mapRef.current,
+        position: currentPosition,
+        xAnchor: 0.5,
+        yAnchor: 0.5,
+        zIndex: 5
+      });
+    } else {
+      currentMarkerRef.current.setPosition(currentPosition);
+      currentMarkerRef.current.setMap(mapRef.current);
+    }
+
+    const currentPoint = points.at(-1);
+    if (currentPoint?.accuracy) {
+      if (!accuracyCircleRef.current) {
+        accuracyCircleRef.current = new kakao.maps.Circle({
+          center: currentPosition,
+          radius: Math.min(currentPoint.accuracy, 100),
+          strokeWeight: 1,
+          strokeColor: "#10b981",
+          strokeOpacity: 0.35,
+          fillColor: "#10b981",
+          fillOpacity: 0.08
+        });
+        accuracyCircleRef.current.setMap(mapRef.current);
+      } else {
+        accuracyCircleRef.current.setPosition(currentPosition);
+        accuracyCircleRef.current.setRadius(Math.min(currentPoint.accuracy, 100));
+      }
+    }
+
     polylineRef.current?.setPath(path);
 
-    if (path.length === 1) {
+    if (!centeredOnceRef.current) {
+      centeredOnceRef.current = true;
       mapRef.current.setCenter(currentPosition);
+      mapRef.current.setLevel(4);
       return;
     }
 
-    const bounds = new kakao.maps.LatLngBounds();
-    path.forEach((position) => bounds.extend(position));
-    mapRef.current.setBounds(bounds, 48, 48, 48, 48);
-  }, [points, status]);
+    if (following) {
+      mapRef.current.panTo(currentPosition);
+    }
+  }, [following, isRunning, points, status]);
+
+  const latestPoint = points.at(-1);
+  const runStatus = isPaused ? "일시정지" : isRunning ? "GPS 기록 중" : "현재 위치";
 
   return (
     <div
@@ -191,6 +251,43 @@ export function KakaoMap({ className, points = [] }: KakaoMapProps) {
       )}
     >
       <div className="absolute inset-0" ref={containerRef} />
+      {status === "ready" ? (
+        <>
+          <div className="pointer-events-none absolute left-4 top-4 z-10 flex items-center gap-2 rounded-md bg-white/95 px-3 py-2 text-xs font-black shadow-soft backdrop-blur">
+            {isPaused ? (
+              <Pause className="text-amber-600" size={15} />
+            ) : isRunning ? (
+              <Activity className="text-primary" size={15} />
+            ) : (
+              <LocateFixed className="text-primary" size={15} />
+            )}
+            {locationStatus === "requesting" ? "GPS 연결 중" : runStatus}
+          </div>
+          <Button
+            aria-label="내 위치로 이동"
+            className="absolute bottom-4 right-4 z-10 size-11 rounded-full bg-white p-0 text-ink shadow-soft"
+            onClick={() => {
+              setFollowing(true);
+              if (latestPoint && mapRef.current) {
+                const kakao = (window as KakaoWindow).kakao;
+                mapRef.current.panTo(
+                  new kakao!.maps.LatLng(latestPoint.latitude, latestPoint.longitude)
+                );
+              }
+              onLocate?.();
+            }}
+            title="내 위치로 이동"
+            variant="secondary"
+          >
+            <LocateFixed className={following ? "text-primary" : "text-muted"} size={20} />
+          </Button>
+          {locationStatus === "denied" ? (
+            <div className="absolute inset-x-4 bottom-4 z-10 mr-14 rounded-md bg-white/95 px-3 py-2 text-xs font-bold text-danger shadow-soft">
+              위치 권한을 허용하면 현위치와 러닝 경로를 기록할 수 있습니다.
+            </div>
+          ) : null}
+        </>
+      ) : null}
       {status !== "ready" ? (
         <div className="absolute inset-0 grid place-items-center bg-[#e8efe9] px-8 text-center">
           <div>
@@ -218,8 +315,10 @@ export function KakaoMap({ className, points = [] }: KakaoMapProps) {
                   className="mt-4"
                   onClick={() => {
                     mapRef.current = null;
-                    markerRef.current = null;
+                    currentMarkerRef.current = null;
+                    accuracyCircleRef.current = null;
                     polylineRef.current = null;
+                    centeredOnceRef.current = false;
                     kakaoLoader = null;
                     setAttempt((value) => value + 1);
                   }}
