@@ -1,8 +1,14 @@
 # Vercel 배포
 
 이 프로젝트는 Next.js라 별도의 `vercel.json` 없이 Vercel에 배포할 수
-있습니다. 현재 폴더는 Git 저장소가 아니므로 아래 GitHub 방식이 가장
-관리하기 쉽습니다.
+있습니다. GitHub의 `kiaman0700/rungether` 저장소와 Vercel 프로젝트가
+연결되어 `main` 브랜치 푸시가 자동으로 프로덕션에 배포됩니다.
+
+현재 프로덕션 주소:
+
+```text
+https://rungether.vercel.app
+```
 
 ## 1. GitHub 저장소 준비
 

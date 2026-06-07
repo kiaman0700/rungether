@@ -4,6 +4,8 @@
 로그인, 피드, 좋아요, 프로필 흐름을 사용하되 모든 게시물과 관계가 러닝
 기록, 경로, 크루 활동을 중심으로 이어지도록 구성합니다.
 
+서비스: https://rungether.vercel.app
+
 ## 스택
 
 - Next.js App Router
