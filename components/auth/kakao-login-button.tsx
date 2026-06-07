@@ -1,10 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
-import { markAuthFlowConfirmed, markAuthFlowStarted } from "@/lib/auth-flow";
+import { clearAuthFlow, markAuthFlowStarted } from "@/lib/auth-flow";
 import { getSupabaseClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
@@ -21,7 +20,6 @@ export function KakaoLoginButton({
   compact = false,
   label = "카카오로 시작하기"
 }: KakaoLoginButtonProps) {
-  const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -36,19 +34,17 @@ export function KakaoLoginButton({
     setIsLoading(true);
     setMessage(null);
 
-    const { data: sessionData } = await supabase.auth.getSession();
-    if (sessionData.session) {
-      markAuthFlowConfirmed();
-      router.push("/onboarding");
-      return;
-    }
-
+    clearAuthFlow();
+    await supabase.auth.signOut({ scope: "local" });
     markAuthFlowStarted();
     const redirectTo = new URL("/auth/callback", window.location.origin).toString();
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "kakao",
       options: {
-        redirectTo
+        redirectTo,
+        queryParams: {
+          prompt: "login"
+        }
       }
     });
 

@@ -4,6 +4,10 @@ export function markAuthFlowStarted() {
   window.sessionStorage.setItem(authFlowKey, "started");
 }
 
+export function hasStartedAuthFlow() {
+  return window.sessionStorage.getItem(authFlowKey) === "started";
+}
+
 export function markAuthFlowConfirmed() {
   window.sessionStorage.setItem(authFlowKey, "confirmed");
 }

@@ -4,7 +4,11 @@ import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { markAuthFlowConfirmed } from "@/lib/auth-flow";
+import {
+  clearAuthFlow,
+  hasStartedAuthFlow,
+  markAuthFlowConfirmed
+} from "@/lib/auth-flow";
 import { getSupabaseClient } from "@/lib/supabase";
 
 export function AuthCallback() {
@@ -25,6 +29,12 @@ export function AuthCallback() {
 
       if (!supabase) {
         setStatus("Supabase 환경 변수가 설정되지 않았습니다.");
+        return;
+      }
+
+      if (!hasStartedAuthFlow()) {
+        clearAuthFlow();
+        router.replace("/");
         return;
       }
 
