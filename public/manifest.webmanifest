@@ -1,0 +1,18 @@
+{
+  "name": "RUNGETHER",
+  "short_name": "RUNGETHER",
+  "description": "위치 기반 러닝 SNS와 국토대장정 플랫폼",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#eef5ef",
+  "theme_color": "#0f8a5f",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
