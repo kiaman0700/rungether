@@ -307,7 +307,13 @@ export function RunnerScreen({
       Alert.alert("위치 권한", "러닝 기록을 위해 정확한 위치 권한을 허용해 주세요.");
       return false;
     }
-    const background = await Location.requestBackgroundPermissionsAsync();
+    let backgroundStatus = "denied";
+    try {
+      const background = await Location.requestBackgroundPermissionsAsync();
+      backgroundStatus = background.status;
+    } catch {
+      backgroundStatus = "unavailable";
+    }
     try {
       await Location.startLocationUpdatesAsync(RUN_LOCATION_TASK, {
         accuracy: Location.Accuracy.BestForNavigation,
@@ -325,7 +331,9 @@ export function RunnerScreen({
         }
       });
       setPermissionStatus(
-        background.status === "granted" ? "백그라운드 GPS 기록 중" : "앱 사용 중 GPS 기록"
+        backgroundStatus === "granted"
+          ? "백그라운드 GPS 기록 중"
+          : "앱 사용 중 GPS 기록"
       );
     } catch {
       fallbackSubscription.current = await Location.watchPositionAsync(

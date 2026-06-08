@@ -3,6 +3,7 @@ import "./src/tasks/locationTask";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Session } from "@supabase/supabase-js";
 import * as ImagePicker from "expo-image-picker";
+import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import {
   Bell,
@@ -328,7 +329,7 @@ function AuthScreen({ palette }: { palette: ReturnType<typeof createPalette> }) 
   async function signIn() {
     if (!supabase || busy) return;
     setBusy(true);
-    const redirectTo = "rungether://auth/callback";
+    const redirectTo = Linking.createURL("auth/callback");
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "kakao",
       options: {
