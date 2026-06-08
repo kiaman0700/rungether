@@ -1,12 +1,13 @@
 "use client";
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
-import { AtSign, Camera, Check, Loader2, UserRound, X } from "lucide-react";
+import { AtSign, Camera, Check, Lock, Loader2, UserRound, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { clearAuthFlow, hasConfirmedAuthFlow } from "@/lib/auth-flow";
 import { getSupabaseClient } from "@/lib/supabase";
+import { cn } from "@/lib/utils";
 
 const handlePattern = /^[a-z0-9._]{3,20}$/;
 
@@ -19,6 +20,7 @@ type ExistingProfile = {
   display_name: string;
   bio: string | null;
   avatar_url: string | null;
+  is_private: boolean;
   onboarding_completed: boolean;
 };
 
@@ -32,6 +34,7 @@ export function ProfileForm({ mode }: ProfileFormProps) {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [isPrivate, setIsPrivate] = useState(false);
   const [status, setStatus] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isReady, setIsReady] = useState(false);
@@ -56,7 +59,7 @@ export function ProfileForm({ mode }: ProfileFormProps) {
 
       setUserId(data.user.id);
       const { data: profile } = await (supabase.from("users") as any)
-        .select("handle,display_name,bio,avatar_url,onboarding_completed")
+        .select("handle,display_name,bio,avatar_url,is_private,onboarding_completed")
         .eq("id", data.user.id)
         .maybeSingle();
       const existing = profile as ExistingProfile | null;
@@ -77,6 +80,7 @@ export function ProfileForm({ mode }: ProfileFormProps) {
         setBio(existing.bio ?? "");
         setAvatarUrl(existing.avatar_url);
         setAvatarPreview(existing.avatar_url);
+        setIsPrivate(existing.is_private);
       } else {
         const kakaoAvatar =
           data.user.user_metadata?.avatar_url ??
@@ -186,6 +190,7 @@ export function ProfileForm({ mode }: ProfileFormProps) {
         display_name: nextDisplayName,
         bio: skipOptional ? null : bio.trim() || null,
         avatar_url: uploadedAvatar,
+        is_private: isPrivate,
         onboarding_completed: true,
         updated_at: new Date().toISOString()
       });
@@ -320,6 +325,36 @@ export function ProfileForm({ mode }: ProfileFormProps) {
                   </p>
                 </div>
               </label>
+
+              <div className="flex items-center gap-4 py-4">
+                <span className="grid size-10 shrink-0 place-items-center rounded-full bg-zinc-100">
+                  <Lock size={18} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold">비공개 계정</p>
+                  <p className="mt-1 text-xs font-semibold leading-5 text-muted">
+                    팔로우 요청을 직접 수락한 사람만 게시물과 러닝 기록을 볼 수 있습니다.
+                  </p>
+                </div>
+                <button
+                  aria-pressed={isPrivate}
+                  className={cn(
+                    "relative h-7 w-12 shrink-0 rounded-full transition-colors",
+                    isPrivate ? "bg-primary" : "bg-zinc-300"
+                  )}
+                  disabled={isLoading}
+                  onClick={() => setIsPrivate((value) => !value)}
+                  role="switch"
+                  type="button"
+                >
+                  <span
+                    className={cn(
+                      "absolute top-1 size-5 rounded-full bg-white shadow transition-all",
+                      isPrivate ? "left-6" : "left-1"
+                    )}
+                  />
+                </button>
+              </div>
             </div>
 
             <p className="mt-3 min-h-5 text-xs font-bold leading-5 text-danger" role="status">

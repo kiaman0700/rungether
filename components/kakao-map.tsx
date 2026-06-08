@@ -16,6 +16,14 @@ export type MapPoint = {
 
 export type LocationStatus = "idle" | "requesting" | "ready" | "denied" | "unavailable";
 
+export type SharedMapLocation = {
+  avatarUrl?: string | null;
+  handle: string;
+  latitude: number;
+  longitude: number;
+  userId: string;
+};
+
 type KakaoMapProps = {
   className?: string;
   isPaused?: boolean;
@@ -23,6 +31,7 @@ type KakaoMapProps = {
   locationStatus?: LocationStatus;
   onLocate?: () => void;
   points?: MapPoint[];
+  sharedLocations?: SharedMapLocation[];
 };
 
 type KakaoWindow = Window & {
@@ -89,13 +98,15 @@ export function KakaoMap({
   isRunning = false,
   locationStatus = "idle",
   onLocate,
-  points = []
+  points = [],
+  sharedLocations = []
 }: KakaoMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const currentMarkerRef = useRef<any>(null);
   const accuracyCircleRef = useRef<any>(null);
   const polylineRef = useRef<any>(null);
+  const sharedOverlaysRef = useRef<Map<string, any>>(new Map());
   const centeredOnceRef = useRef(false);
   const [status, setStatus] = useState<"loading" | "ready" | "error" | "missing">("loading");
   const [errorMessage, setErrorMessage] = useState("");
@@ -239,6 +250,84 @@ export function KakaoMap({
       mapRef.current.panTo(currentPosition);
     }
   }, [following, isRunning, points, status]);
+
+  useEffect(() => {
+    if (status !== "ready" || !mapRef.current) {
+      return;
+    }
+
+    const kakao = (window as KakaoWindow).kakao;
+    if (!kakao?.maps) {
+      return;
+    }
+
+    const visibleIds = new Set(sharedLocations.map((location) => location.userId));
+    sharedOverlaysRef.current.forEach((overlay, userId) => {
+      if (!visibleIds.has(userId)) {
+        overlay.setMap(null);
+        sharedOverlaysRef.current.delete(userId);
+      }
+    });
+
+    sharedLocations.forEach((location) => {
+      const position = new kakao.maps.LatLng(
+        location.latitude,
+        location.longitude
+      );
+      const existing = sharedOverlaysRef.current.get(location.userId);
+      if (existing) {
+        existing.setPosition(position);
+        existing.setMap(mapRef.current);
+        return;
+      }
+
+      const marker = document.createElement("div");
+      marker.style.display = "grid";
+      marker.style.justifyItems = "center";
+      marker.style.gap = "4px";
+
+      const avatar = document.createElement(
+        location.avatarUrl ? "img" : "div"
+      ) as HTMLImageElement | HTMLDivElement;
+      if (avatar instanceof HTMLImageElement) {
+        avatar.src = location.avatarUrl!;
+        avatar.alt = `${location.handle} 위치`;
+        avatar.style.objectFit = "cover";
+      } else {
+        avatar.textContent = location.handle.slice(0, 1).toUpperCase();
+        avatar.style.display = "grid";
+        avatar.style.placeItems = "center";
+        avatar.style.background = "#111827";
+        avatar.style.color = "white";
+        avatar.style.fontWeight = "900";
+      }
+      avatar.style.width = "42px";
+      avatar.style.height = "42px";
+      avatar.style.borderRadius = "9999px";
+      avatar.style.border = "3px solid white";
+      avatar.style.boxShadow = "0 4px 14px rgba(0,0,0,.28)";
+
+      const label = document.createElement("span");
+      label.textContent = `@${location.handle}`;
+      label.style.padding = "4px 7px";
+      label.style.borderRadius = "6px";
+      label.style.background = "rgba(17,24,39,.92)";
+      label.style.color = "white";
+      label.style.fontSize = "11px";
+      label.style.fontWeight = "800";
+      marker.append(avatar, label);
+
+      const overlay = new kakao.maps.CustomOverlay({
+        content: marker,
+        map: mapRef.current,
+        position,
+        xAnchor: 0.5,
+        yAnchor: 1.15,
+        zIndex: 6
+      });
+      sharedOverlaysRef.current.set(location.userId, overlay);
+    });
+  }, [sharedLocations, status]);
 
   const latestPoint = points.at(-1);
   const runStatus = isPaused ? "일시정지" : isRunning ? "GPS 기록 중" : "현재 위치";
