@@ -1,0 +1,92 @@
+{
+  "expo": {
+    "name": "RUNGETHER",
+    "slug": "rungether-mobile",
+    "scheme": "rungether",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F7F8F6"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.kiaman0700.rungether",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "러닝 거리와 경로를 기록하기 위해 위치를 사용합니다.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "화면이 잠기거나 앱이 백그라운드에 있어도 러닝 경로를 계속 기록합니다.",
+        "NSPhotoLibraryUsageDescription": "러닝 인증 배경 사진을 선택하기 위해 사진 보관함을 사용합니다.",
+        "NSPhotoLibraryAddUsageDescription": "완성한 러닝 인증 이미지를 사진 앱에 저장합니다.",
+        "NSCameraUsageDescription": "러닝 인증 배경 사진을 촬영합니다.",
+        "UIBackgroundModes": ["location", "audio"]
+      }
+    },
+    "android": {
+      "package": "com.kiaman0700.rungether",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
+      ],
+      "adaptiveIcon": {
+        "backgroundColor": "#F7F8F6",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "러닝 거리와 경로를 기록하기 위해 위치를 사용합니다.",
+          "locationAlwaysAndWhenInUsePermission": "화면이 잠겨도 러닝 경로를 계속 기록합니다.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "러닝 인증 배경 사진을 선택합니다.",
+          "cameraPermission": "러닝 인증 배경 사진을 촬영합니다.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "완성한 러닝 인증 이미지를 사진 앱에 저장합니다.",
+          "savePhotosPermission": "완성한 러닝 인증 이미지를 사진 앱에 저장합니다."
+        }
+      ],
+      "expo-sqlite",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false,
+          "recordAudioAndroid": false,
+          "enableBackgroundPlayback": true
+        }
+      ],
+      "expo-web-browser",
+      "expo-secure-store"
+    ],
+    "extra": {
+      "webUrl": "https://rungether.vercel.app",
+      "eas": {
+        "projectId": ""
+      }
+    }
+  }
+}

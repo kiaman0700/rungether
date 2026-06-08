@@ -16,13 +16,15 @@ RUNGETHER의 러닝 기록, 피드, 친구, 채팅, 위치 공유 기능은 Supa
 ## 이번 SQL에서 활성화되는 기능
 
 - `users`: 고유 RUNGETHER 아이디, 프로필, 온보딩 완료 상태
-- `runs`, `run_tracks`: GPS 러닝 기록과 경로
+- `runs`, `run_tracks`, `run_splits`: 검증된 GPS 러닝 기록, 경로, km 스플릿
 - `posts`, `likes`, `comments`: 피드와 좋아요
-- `friends`: 친구 요청과 수락
-- `chats`, `messages`: RUNGETHER 공개 라운지 채팅
+- `follows`: 공개·비공개 계정의 팔로우와 요청
+- `chats`, `chat_members`, `messages`: 1:1·그룹·크루 DM과 공지
 - `live_locations`: 선택한 사용자의 실시간 위치 공유
 - `emergency_reports`: 앱 안의 SOS 요청 기록
-- `crews`, `journeys`: 크루와 국토대장정 데이터 기반
+- `crews`, `crew_members`: 활동 지역이 지정된 크루와 최대 50명 멤버
+- `group_runs`, `group_run_members`: 함께 러닝 모집과 참가
+- `run_share_projects`: 러닝 인증 스튜디오 초안과 결과물
 - `avatars` Storage 버킷: 사용자가 업로드한 프로필 이미지
 
 ## 실행 후 확인
@@ -32,14 +34,16 @@ RUNGETHER의 러닝 기록, 피드, 친구, 채팅, 위치 공유 기능은 Supa
 - `users`
 - `runs`
 - `run_tracks`
+- `run_splits`
 - `posts`
 - `likes`
-- `friends`
+- `follows`
 - `chats`
+- `chat_members`
 - `messages`
 - `live_locations`
-
-`chats` 테이블에는 `RUNGETHER 라운지` 행이 자동으로 한 개 생성됩니다.
+- `crews`
+- `group_runs`
 
 `Storage`에는 `avatars` 버킷이 보여야 합니다. 버킷은 공개 이미지 읽기를
 허용하지만, 업로드·수정·삭제는 로그인한 사용자가 자기 폴더에 저장한
@@ -51,6 +55,9 @@ RUNGETHER의 러닝 기록, 피드, 친구, 채팅, 위치 공유 기능은 Supa
 기존 사용자의 기본값은 `false`이므로 다음 로그인 때 한 번 RUNGETHER
 아이디와 프로필 설정 화면을 거칩니다. 필수 항목은 아이디뿐이고,
 표시 이름·소개·프로필 사진은 건너뛴 뒤 나중에 수정할 수 있습니다.
+
+기존 크루의 지역 열은 비어 있을 수 있지만, 최신 SQL 실행 후 새로 만드는
+크루는 광역 지역과 시·군·구를 모두 저장해야 합니다.
 
 ## 주의
 

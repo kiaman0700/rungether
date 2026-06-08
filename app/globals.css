@@ -3,13 +3,15 @@
 @tailwind utilities;
 
 :root {
-  --border: 210 20% 88%;
-  --surface: 90 18% 97%;
-  --ink: 216 28% 13%;
-  --muted: 218 12% 44%;
+  color-scheme: light;
+  --border: 150 12% 86%;
+  --surface: 100 10% 97%;
+  --card: 0 0% 100%;
+  --ink: 160 17% 11%;
+  --muted: 155 7% 42%;
   --primary: 160 84% 32%;
-  --accent: 220 76% 55%;
-  --danger: 350 84% 53%;
+  --accent: 5 80% 66%;
+  --danger: 5 76% 58%;
 }
 
 * {
@@ -24,11 +26,7 @@ body {
   min-height: 100%;
   margin: 0;
   overflow-x: hidden;
-  background:
-    linear-gradient(90deg, rgba(20, 130, 105, 0.08) 1px, transparent 1px),
-    linear-gradient(0deg, rgba(20, 130, 105, 0.06) 1px, transparent 1px),
-    hsl(var(--surface));
-  background-size: 44px 44px;
+  background: hsl(var(--surface));
   color: hsl(var(--ink));
   font-family:
     "Pretendard",
@@ -37,6 +35,58 @@ body {
     Helvetica,
     sans-serif;
   letter-spacing: 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --border: 155 12% 20%;
+    --surface: 160 13% 6%;
+    --card: 155 12% 9%;
+    --ink: 120 11% 96%;
+    --muted: 150 6% 63%;
+    --primary: 158 64% 47%;
+    --accent: 5 80% 66%;
+    --danger: 5 76% 62%;
+  }
+
+  .bg-white {
+    background-color: hsl(var(--card)) !important;
+  }
+
+  .bg-zinc-50,
+  .bg-zinc-100 {
+    background-color: hsl(155 10% 12%) !important;
+  }
+
+  .text-zinc-400,
+  .text-zinc-500 {
+    color: hsl(var(--muted)) !important;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --border: 155 12% 20%;
+  --surface: 160 13% 6%;
+  --card: 155 12% 9%;
+  --ink: 120 11% 96%;
+  --muted: 150 6% 63%;
+  --primary: 158 64% 47%;
+  --accent: 5 80% 66%;
+  --danger: 5 76% 62%;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --border: 150 12% 86%;
+  --surface: 100 10% 97%;
+  --card: 0 0% 100%;
+  --ink: 160 17% 11%;
+  --muted: 155 7% 42%;
+  --primary: 160 84% 32%;
+  --accent: 5 80% 66%;
+  --danger: 5 76% 58%;
 }
 
 a {

@@ -22,6 +22,7 @@ type ExistingProfile = {
   avatar_url: string | null;
   is_private: boolean;
   onboarding_completed: boolean;
+  default_home: "running" | "feed";
 };
 
 export function ProfileForm({ mode }: ProfileFormProps) {
@@ -35,6 +36,7 @@ export function ProfileForm({ mode }: ProfileFormProps) {
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [isPrivate, setIsPrivate] = useState(false);
+  const [defaultHome, setDefaultHome] = useState<"running" | "feed">("running");
   const [status, setStatus] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isReady, setIsReady] = useState(false);
@@ -59,7 +61,7 @@ export function ProfileForm({ mode }: ProfileFormProps) {
 
       setUserId(data.user.id);
       const { data: profile } = await (supabase.from("users") as any)
-        .select("handle,display_name,bio,avatar_url,is_private,onboarding_completed")
+        .select("handle,display_name,bio,avatar_url,is_private,onboarding_completed,default_home")
         .eq("id", data.user.id)
         .maybeSingle();
       const existing = profile as ExistingProfile | null;
@@ -81,6 +83,7 @@ export function ProfileForm({ mode }: ProfileFormProps) {
         setAvatarUrl(existing.avatar_url);
         setAvatarPreview(existing.avatar_url);
         setIsPrivate(existing.is_private);
+        setDefaultHome(existing.default_home ?? "running");
       } else {
         const kakaoAvatar =
           data.user.user_metadata?.avatar_url ??
@@ -192,6 +195,7 @@ export function ProfileForm({ mode }: ProfileFormProps) {
         avatar_url: uploadedAvatar,
         is_private: isPrivate,
         onboarding_completed: true,
+        default_home: defaultHome,
         updated_at: new Date().toISOString()
       });
 
@@ -362,15 +366,42 @@ export function ProfileForm({ mode }: ProfileFormProps) {
             </p>
 
             {mode === "onboarding" ? (
-              <Button
-                className="mt-3 w-full"
-                disabled={!isReady || isLoading}
-                onClick={() => void saveProfile(true)}
-                variant="secondary"
-              >
-                <Check size={18} />
-                아이디만 저장하고 시작
-              </Button>
+              <>
+                <div className="mt-4">
+                  <p className="text-sm font-bold">앱을 열었을 때</p>
+                  <div className="mt-2 grid grid-cols-2 rounded-md bg-zinc-100 p-1">
+                    {[
+                      ["running", "러닝 홈"],
+                      ["feed", "SNS 피드"]
+                    ].map(([value, label]) => (
+                      <button
+                        className={cn(
+                          "h-10 rounded-md text-sm font-bold",
+                          defaultHome === value
+                            ? "bg-white text-ink shadow-sm"
+                            : "text-muted"
+                        )}
+                        key={value}
+                        onClick={() =>
+                          setDefaultHome(value as "running" | "feed")
+                        }
+                        type="button"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <Button
+                  className="mt-3 w-full"
+                  disabled={!isReady || isLoading}
+                  onClick={() => void saveProfile(true)}
+                  variant="secondary"
+                >
+                  <Check size={18} />
+                  아이디만 저장하고 시작
+                </Button>
+              </>
             ) : null}
           </div>
         </form>

@@ -75,6 +75,8 @@ create table if not exists public.crews (
   description text,
   is_private boolean not null default false,
   meeting_place text,
+  region_level1 text not null,
+  region_level2 text not null,
   created_at timestamptz not null default now()
 );
 
@@ -3268,3 +3270,1182 @@ on public.crews;
 create trigger prevent_multiple_crew_creation_before_insert
 before insert on public.crews
 for each row execute function public.prevent_multiple_crew_creation();
+
+-- Running-first mobile app settings and verified GPS completion pipeline.
+alter table public.users
+  add column if not exists theme_mode text not null default 'system',
+  add column if not exists default_home text not null default 'running',
+  add column if not exists weight_kg numeric,
+  add column if not exists voice_enabled boolean not null default true,
+  add column if not exists voice_mix_mode text not null default 'duck',
+  add column if not exists voice_distance_interval_m integer not null default 1000,
+  add column if not exists voice_time_interval_min integer not null default 0,
+  add column if not exists voice_read_distance boolean not null default true,
+  add column if not exists voice_read_split_pace boolean not null default true,
+  add column if not exists voice_read_total_time boolean not null default true,
+  add column if not exists voice_read_goal_progress boolean not null default true,
+  add column if not exists voice_volume numeric not null default 1,
+  add column if not exists voice_rate numeric not null default 1;
+
+do $$ begin
+  alter table public.users add constraint users_theme_mode_check
+    check (theme_mode in ('system', 'light', 'dark'));
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  alter table public.users add constraint users_default_home_check
+    check (default_home in ('running', 'feed'));
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  alter table public.users add constraint users_weight_kg_check
+    check (weight_kg is null or weight_kg between 25 and 300);
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  alter table public.users add constraint users_voice_mix_mode_check
+    check (voice_mix_mode in ('duck', 'mix'));
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  alter table public.users add constraint users_voice_distance_interval_check
+    check (voice_distance_interval_m in (500, 1000, 2000));
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  alter table public.users add constraint users_voice_time_interval_check
+    check (voice_time_interval_min in (0, 5, 10, 15));
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  alter table public.users add constraint users_voice_volume_check
+    check (voice_volume between 0 and 1);
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  alter table public.users add constraint users_voice_rate_check
+    check (voice_rate between 0.5 and 1.5);
+exception when duplicate_object then null;
+end $$;
+
+alter table public.runs
+  add column if not exists goal_type text not null default 'open',
+  add column if not exists goal_value numeric,
+  add column if not exists moving_duration_s integer not null default 0,
+  add column if not exists paused_duration_s integer not null default 0,
+  add column if not exists gps_quality numeric,
+  add column if not exists device_platform text,
+  add column if not exists record_source text not null default 'legacy',
+  add column if not exists verified boolean not null default false,
+  add column if not exists route_visible boolean not null default true,
+  add column if not exists completion_key uuid;
+
+do $$ begin
+  alter table public.runs add constraint runs_goal_type_check
+    check (goal_type in ('open', 'distance', 'time'));
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  alter table public.runs add constraint runs_record_source_check
+    check (record_source in ('gps', 'manual', 'legacy'));
+exception when duplicate_object then null;
+end $$;
+create unique index if not exists runs_completion_key_unique
+  on public.runs (completion_key) where completion_key is not null;
+
+alter table public.run_tracks
+  add column if not exists accuracy_m numeric,
+  add column if not exists heading_deg numeric,
+  add column if not exists is_mocked boolean not null default false;
+
+create table if not exists public.run_splits (
+  id bigint generated always as identity primary key,
+  run_id uuid not null references public.runs(id) on delete cascade,
+  split_index integer not null,
+  distance_m numeric not null,
+  duration_s integer not null,
+  pace_s integer,
+  created_at timestamptz not null default now(),
+  unique (run_id, split_index)
+);
+
+create table if not exists public.run_share_projects (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  run_id uuid references public.runs(id) on delete set null,
+  aspect_ratio text not null default '4:5',
+  background_type text not null default 'map',
+  background_url text,
+  layers jsonb not null default '[]'::jsonb,
+  rendered_url text,
+  status text not null default 'draft',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+do $$ begin
+  alter table public.run_share_projects add constraint run_share_aspect_ratio_check
+    check (aspect_ratio in ('9:16', '4:5', '1:1'));
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  alter table public.run_share_projects add constraint run_share_background_type_check
+    check (background_type in ('camera', 'gallery', 'map', 'solid'));
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  alter table public.run_share_projects add constraint run_share_status_check
+    check (status in ('draft', 'completed'));
+exception when duplicate_object then null;
+end $$;
+
+alter table public.run_splits enable row level security;
+alter table public.run_share_projects enable row level security;
+
+drop policy if exists "Run splits follow run visibility" on public.run_splits;
+create policy "Run splits follow run visibility"
+on public.run_splits for select
+using (
+  exists (
+    select 1 from public.runs
+    where runs.id = run_splits.run_id
+      and (
+        runs.user_id = auth.uid()
+        or runs.visibility = 'public'
+        or (
+          runs.visibility = 'friends'
+          and exists (
+            select 1 from public.follows
+            where follows.follower_id = auth.uid()
+              and follows.following_id = runs.user_id
+              and follows.status = 'accepted'
+          )
+        )
+      )
+  )
+);
+
+drop policy if exists "Users manage own run share projects" on public.run_share_projects;
+create policy "Users manage own run share projects"
+on public.run_share_projects for all
+using (user_id = auth.uid())
+with check (user_id = auth.uid());
+
+create or replace function public.award_run_experience()
+returns trigger
+language plpgsql security definer set search_path = public
+as $$
+declare
+  runner public.users%rowtype;
+  run_date date;
+  next_streak integer;
+  base_xp integer;
+  awarded_xp integer;
+  next_xp integer;
+  eligible_crew boolean := false;
+begin
+  select * into runner from public.users where id = new.user_id for update;
+
+  if not coalesce(new.verified, false) or new.record_source <> 'gps' then
+    new.xp_earned := 0;
+    new.streak_day := 0;
+    new.crew_id := null;
+    return new;
+  end if;
+
+  run_date := timezone('Asia/Seoul', new.started_at)::date;
+  if runner.last_run_date = run_date then
+    next_streak := greatest(runner.current_streak, 1);
+  elsif runner.last_run_date = run_date - 1 then
+    next_streak := runner.current_streak + 1;
+  else
+    next_streak := 1;
+  end if;
+
+  base_xp := floor(greatest(new.distance_m, 0) / 100.0);
+  awarded_xp := base_xp + floor(
+    base_xp * greatest(least(next_streak, 10) - 1, 0) * 0.05
+  );
+  next_xp := runner.experience_points + awarded_xp;
+  new.xp_earned := awarded_xp;
+  new.streak_day := next_streak;
+
+  if new.crew_id is not null then
+    select exists (
+      select 1 from public.crew_members
+      where crew_id = new.crew_id and user_id = new.user_id
+        and joined_at <= new.started_at
+    ) or exists (
+      select 1 from public.crew_guest_passes
+      where crew_id = new.crew_id and user_id = new.user_id
+        and status = 'accepted'
+        and starts_at <= new.started_at and ends_at > new.started_at
+    ) into eligible_crew;
+    if not eligible_crew then
+      new.crew_id := null;
+    end if;
+  end if;
+
+  update public.users
+  set total_distance_m = total_distance_m + greatest(new.distance_m, 0),
+      experience_points = next_xp,
+      level = public.level_for_experience(next_xp),
+      current_streak = next_streak,
+      longest_streak = greatest(longest_streak, next_streak),
+      last_run_date = run_date
+  where id = new.user_id;
+  return new;
+end;
+$$;
+
+create or replace function public.award_crew_run_experience()
+returns trigger
+language plpgsql security definer set search_path = public
+as $$
+declare
+  contribution_id uuid;
+  guest_pass_id uuid;
+  contribution_source text;
+begin
+  if not coalesce(new.verified, false)
+    or new.record_source <> 'gps'
+    or new.crew_id is null
+    or new.xp_earned <= 0 then
+    return new;
+  end if;
+
+  select id into contribution_id
+  from public.crew_contributions
+  where crew_id = new.crew_id and user_id = new.user_id and active
+    and joined_at <= new.started_at
+  order by joined_at desc limit 1;
+
+  if contribution_id is not null then
+    update public.crew_contributions
+    set contribution_xp = contribution_xp + new.xp_earned
+    where id = contribution_id;
+    contribution_source := 'member';
+  else
+    select id into guest_pass_id
+    from public.crew_guest_passes
+    where crew_id = new.crew_id and user_id = new.user_id
+      and status = 'accepted'
+      and starts_at <= new.started_at and ends_at > new.started_at
+    order by ends_at desc limit 1;
+    if guest_pass_id is not null then
+      update public.crew_guest_passes
+      set contribution_xp = contribution_xp + new.xp_earned
+      where id = guest_pass_id;
+      contribution_source := 'guest';
+    end if;
+  end if;
+
+  if contribution_source is not null then
+    insert into public.crew_xp_events (
+      crew_id, user_id, run_id, xp, source, earned_at
+    ) values (
+      new.crew_id, new.user_id, new.id, new.xp_earned,
+      contribution_source, new.started_at
+    ) on conflict (run_id) do nothing;
+    update public.crews
+    set experience_points = experience_points + new.xp_earned
+    where id = new.crew_id;
+  end if;
+  return new;
+end;
+$$;
+
+create or replace function public.complete_gps_run(
+  p_started_at timestamptz,
+  p_ended_at timestamptz,
+  p_distance_m numeric,
+  p_duration_s integer,
+  p_moving_duration_s integer,
+  p_paused_duration_s integer,
+  p_average_pace_s integer,
+  p_title text,
+  p_visibility text,
+  p_crew_id uuid,
+  p_goal_type text,
+  p_goal_value numeric,
+  p_gps_quality numeric,
+  p_platform text,
+  p_route_visible boolean,
+  p_completion_key uuid,
+  p_tracks jsonb,
+  p_splits jsonb,
+  p_route_image_url text default null
+)
+returns setof public.runs
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  account_id uuid := auth.uid();
+  completed_run public.runs%rowtype;
+begin
+  if account_id is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if p_completion_key is null then
+    raise exception 'A completion key is required';
+  end if;
+
+  select * into completed_run
+  from public.runs
+  where user_id = account_id and completion_key = p_completion_key;
+  if found then
+    return next completed_run;
+    return;
+  end if;
+
+  if p_ended_at <= p_started_at
+    or p_duration_s < 1
+    or p_moving_duration_s < 1
+    or p_distance_m < 100
+    or jsonb_typeof(p_tracks) <> 'array'
+    or jsonb_array_length(p_tracks) < 2 then
+    raise exception 'The GPS run is too short or incomplete';
+  end if;
+
+  if exists (
+    select 1
+    from jsonb_to_recordset(p_tracks) as point(
+      latitude double precision,
+      longitude double precision,
+      accuracy_m numeric,
+      is_mocked boolean
+    )
+    where point.latitude not between -90 and 90
+      or point.longitude not between -180 and 180
+      or coalesce(point.accuracy_m, 999) > 100
+      or coalesce(point.is_mocked, false)
+  ) then
+    raise exception 'The GPS track contains invalid or mocked locations';
+  end if;
+
+  insert into public.runs (
+    user_id, title, started_at, ended_at, distance_m, duration_s,
+    moving_duration_s, paused_duration_s, average_pace_s, visibility,
+    crew_id, route_image_url, goal_type, goal_value, gps_quality,
+    device_platform, record_source, verified, route_visible, completion_key
+  ) values (
+    account_id, nullif(trim(p_title), ''), p_started_at, p_ended_at,
+    round(p_distance_m), p_duration_s, p_moving_duration_s,
+    greatest(p_paused_duration_s, 0), p_average_pace_s,
+    coalesce(p_visibility, 'friends')::visibility, p_crew_id,
+    p_route_image_url, coalesce(p_goal_type, 'open'), p_goal_value,
+    p_gps_quality, p_platform, 'gps', true, coalesce(p_route_visible, true),
+    p_completion_key
+  )
+  returning * into completed_run;
+
+  insert into public.run_tracks (
+    run_id, recorded_at, latitude, longitude, altitude_m, speed_mps,
+    accuracy_m, heading_deg, is_mocked
+  )
+  select
+    completed_run.id,
+    coalesce(point.recorded_at, p_started_at),
+    point.latitude,
+    point.longitude,
+    point.altitude_m,
+    point.speed_mps,
+    point.accuracy_m,
+    point.heading_deg,
+    coalesce(point.is_mocked, false)
+  from jsonb_to_recordset(p_tracks) as point(
+    recorded_at timestamptz,
+    latitude double precision,
+    longitude double precision,
+    altitude_m numeric,
+    speed_mps numeric,
+    accuracy_m numeric,
+    heading_deg numeric,
+    is_mocked boolean
+  );
+
+  if jsonb_typeof(coalesce(p_splits, '[]'::jsonb)) = 'array' then
+    insert into public.run_splits (
+      run_id, split_index, distance_m, duration_s, pace_s
+    )
+    select
+      completed_run.id,
+      split.split_index,
+      split.distance_m,
+      split.duration_s,
+      split.pace_s
+    from jsonb_to_recordset(coalesce(p_splits, '[]'::jsonb)) as split(
+      split_index integer,
+      distance_m numeric,
+      duration_s integer,
+      pace_s integer
+    )
+    where split.split_index > 0
+    on conflict (run_id, split_index) do nothing;
+  end if;
+
+  return next completed_run;
+end;
+$$;
+
+revoke all on function public.complete_gps_run(
+  timestamptz, timestamptz, numeric, integer, integer, integer, integer,
+  text, text, uuid, text, numeric, numeric, text, boolean, uuid, jsonb,
+  jsonb, text
+) from public;
+grant execute on function public.complete_gps_run(
+  timestamptz, timestamptz, numeric, integer, integer, integer, integer,
+  text, text, uuid, text, numeric, numeric, text, boolean, uuid, jsonb,
+  jsonb, text
+) to authenticated;
+
+-- Temporary together-running sessions are independent from crews.
+alter table public.group_runs
+  add column if not exists session_code text,
+  add column if not exists run_mode text not null default 'scheduled',
+  add column if not exists status text not null default 'planning',
+  add column if not exists synchronized_start_at timestamptz,
+  add column if not exists ended_at timestamptz;
+
+do $$ begin
+  alter table public.group_runs add constraint group_runs_mode_check
+    check (run_mode in ('scheduled', 'instant'));
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  alter table public.group_runs add constraint group_runs_status_check
+    check (status in ('planning', 'ready', 'running', 'finished', 'cancelled'));
+exception when duplicate_object then null;
+end $$;
+create unique index if not exists group_runs_session_code_unique
+  on public.group_runs (session_code) where session_code is not null;
+
+create table if not exists public.group_run_live_locations (
+  group_run_id uuid not null references public.group_runs(id) on delete cascade,
+  user_id uuid not null references public.users(id) on delete cascade,
+  latitude double precision not null,
+  longitude double precision not null,
+  distance_m numeric not null default 0,
+  elapsed_s integer not null default 0,
+  updated_at timestamptz not null default now(),
+  primary key (group_run_id, user_id)
+);
+
+alter table public.group_run_live_locations enable row level security;
+
+drop policy if exists "Together runners can read session locations"
+on public.group_run_live_locations;
+create policy "Together runners can read session locations"
+on public.group_run_live_locations for select
+to authenticated
+using (
+  exists (
+    select 1 from public.group_run_members
+    where group_run_members.group_run_id =
+        group_run_live_locations.group_run_id
+      and group_run_members.user_id = auth.uid()
+  )
+);
+
+drop policy if exists "Together runners manage own session location"
+on public.group_run_live_locations;
+create policy "Together runners manage own session location"
+on public.group_run_live_locations for all
+to authenticated
+using (user_id = auth.uid())
+with check (
+  user_id = auth.uid()
+  and exists (
+    select 1 from public.group_run_members
+    where group_run_members.group_run_id =
+        group_run_live_locations.group_run_id
+      and group_run_members.user_id = auth.uid()
+  )
+);
+
+create or replace function public.create_together_run(
+  p_title text default '지금 함께 달리기',
+  p_max_members integer default 10
+)
+returns setof public.group_runs
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  account_id uuid := auth.uid();
+  created_run public.group_runs%rowtype;
+  generated_code text;
+begin
+  if account_id is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if p_max_members not between 2 and 30 then
+    raise exception 'Together runs support 2 to 30 runners';
+  end if;
+
+  loop
+    generated_code := upper(substr(encode(gen_random_bytes(6), 'hex'), 1, 6));
+    exit when not exists (
+      select 1 from public.group_runs where session_code = generated_code
+    );
+  end loop;
+
+  insert into public.group_runs (
+    host_id, title, meeting_place, starts_at, max_members,
+    session_code, run_mode, status
+  ) values (
+    account_id,
+    coalesce(nullif(trim(p_title), ''), '지금 함께 달리기'),
+    '현장 합류',
+    now(),
+    p_max_members,
+    generated_code,
+    'instant',
+    'ready'
+  )
+  returning * into created_run;
+
+  insert into public.group_run_members (group_run_id, user_id)
+  values (created_run.id, account_id)
+  on conflict do nothing;
+
+  return next created_run;
+end;
+$$;
+
+create or replace function public.join_together_run(p_session_code text)
+returns setof public.group_runs
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  account_id uuid := auth.uid();
+  target_run public.group_runs%rowtype;
+  member_count integer;
+begin
+  if account_id is null then
+    raise exception 'Authentication required';
+  end if;
+
+  select * into target_run
+  from public.group_runs
+  where session_code = upper(trim(p_session_code))
+    and run_mode = 'instant'
+    and status = 'ready'
+  for update;
+
+  if target_run.id is null then
+    raise exception 'The together-running code is invalid or closed';
+  end if;
+
+  select count(*) into member_count
+  from public.group_run_members
+  where group_run_id = target_run.id;
+
+  if member_count >= target_run.max_members then
+    raise exception 'The together-running session is full';
+  end if;
+
+  insert into public.group_run_members (group_run_id, user_id)
+  values (target_run.id, account_id)
+  on conflict do nothing;
+
+  return next target_run;
+end;
+$$;
+
+create or replace function public.start_together_run(p_group_run_id uuid)
+returns setof public.group_runs
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  account_id uuid := auth.uid();
+  target_run public.group_runs%rowtype;
+begin
+  update public.group_runs
+  set status = 'running',
+      synchronized_start_at = now() + interval '6 seconds'
+  where id = p_group_run_id
+    and host_id = account_id
+    and run_mode = 'instant'
+    and status = 'ready'
+  returning * into target_run;
+
+  if target_run.id is null then
+    raise exception 'Only the host can start a ready together-running session';
+  end if;
+  return next target_run;
+end;
+$$;
+
+create or replace function public.finish_together_run(p_group_run_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.group_runs
+  set status = 'finished', ended_at = now()
+  where id = p_group_run_id
+    and host_id = auth.uid()
+    and run_mode = 'instant';
+end;
+$$;
+
+revoke all on function public.create_together_run(text, integer) from public;
+revoke all on function public.join_together_run(text) from public;
+revoke all on function public.start_together_run(uuid) from public;
+revoke all on function public.finish_together_run(uuid) from public;
+grant execute on function public.create_together_run(text, integer) to authenticated;
+grant execute on function public.join_together_run(text) to authenticated;
+grant execute on function public.start_together_run(uuid) to authenticated;
+grant execute on function public.finish_together_run(uuid) to authenticated;
+
+-- Group DM, pinned notices, and together-running recruitment cards.
+alter table public.chats
+  add column if not exists chat_type text not null default 'direct';
+
+do $$ begin
+  alter table public.chats add constraint chats_type_check
+    check (chat_type in ('direct', 'group', 'crew'));
+exception when duplicate_object then null;
+end $$;
+
+update public.chats
+set chat_type = case
+  when crew_id is not null then 'crew'
+  when direct_key is not null then 'direct'
+  else 'group'
+end;
+
+alter table public.chat_members
+  add column if not exists role text not null default 'member';
+
+do $$ begin
+  alter table public.chat_members add constraint chat_members_role_check
+    check (role in ('member', 'admin'));
+exception when duplicate_object then null;
+end $$;
+
+alter table public.messages
+  add column if not exists message_type text not null default 'text',
+  add column if not exists payload jsonb not null default '{}'::jsonb,
+  add column if not exists is_pinned boolean not null default false;
+
+do $$ begin
+  alter table public.messages add constraint messages_type_check
+    check (message_type in ('text', 'notice', 'run_recruitment', 'system'));
+exception when duplicate_object then null;
+end $$;
+
+alter table public.group_runs
+  add column if not exists course_summary text,
+  add column if not exists join_policy text not null default 'first_come',
+  add column if not exists recruitment_chat_id uuid
+    references public.chats(id) on delete set null;
+
+do $$ begin
+  alter table public.group_runs add constraint group_runs_join_policy_check
+    check (join_policy in ('first_come', 'approval'));
+exception when duplicate_object then null;
+end $$;
+
+create table if not exists public.group_run_join_requests (
+  id uuid primary key default gen_random_uuid(),
+  group_run_id uuid not null references public.group_runs(id) on delete cascade,
+  requester_id uuid not null references public.users(id) on delete cascade,
+  status text not null default 'pending',
+  requested_at timestamptz not null default now(),
+  decided_at timestamptz,
+  unique (group_run_id, requester_id)
+);
+
+do $$ begin
+  alter table public.group_run_join_requests
+    add constraint group_run_join_requests_status_check
+    check (status in ('pending', 'accepted', 'rejected', 'cancelled'));
+exception when duplicate_object then null;
+end $$;
+
+alter table public.group_run_join_requests enable row level security;
+
+drop policy if exists "Run applicants can read related requests"
+on public.group_run_join_requests;
+create policy "Run applicants can read related requests"
+on public.group_run_join_requests for select
+to authenticated
+using (
+  requester_id = auth.uid()
+  or exists (
+    select 1 from public.group_runs
+    where group_runs.id = group_run_join_requests.group_run_id
+      and group_runs.host_id = auth.uid()
+  )
+);
+
+create or replace function public.enforce_group_run_membership()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  target_run public.group_runs%rowtype;
+  current_members integer;
+begin
+  select * into target_run
+  from public.group_runs
+  where id = new.group_run_id
+  for update;
+
+  if target_run.id is null then
+    raise exception 'Together run not found';
+  end if;
+
+  if target_run.crew_id is not null and exists (
+    select 1 from public.crew_blocks
+    where crew_id = target_run.crew_id and user_id = new.user_id
+  ) then
+    raise exception 'This runner is blocked from the crew';
+  end if;
+
+  if coalesce(current_setting('rungether.invite_override', true), '') <> 'on' then
+    select count(*) into current_members
+    from public.group_run_members
+    where group_run_id = new.group_run_id;
+    if current_members >= target_run.max_members then
+      raise exception 'The together run is full';
+    end if;
+
+    if target_run.join_policy = 'approval'
+      and new.user_id <> target_run.host_id
+      and not exists (
+        select 1 from public.group_run_join_requests
+        where group_run_id = new.group_run_id
+          and requester_id = new.user_id
+          and status = 'accepted'
+      ) then
+      raise exception 'This together run requires host approval';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists reject_blocked_group_run_member_before_insert
+on public.group_run_members;
+drop trigger if exists enforce_group_run_membership_before_insert
+on public.group_run_members;
+create trigger enforce_group_run_membership_before_insert
+before insert on public.group_run_members
+for each row execute function public.enforce_group_run_membership();
+
+create or replace function public.create_group_chat(
+  p_title text,
+  p_member_ids uuid[]
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  account_id uuid := auth.uid();
+  chat_id uuid;
+  member_id uuid;
+begin
+  if account_id is null then raise exception 'Authentication required'; end if;
+  if nullif(trim(p_title), '') is null then raise exception 'A title is required'; end if;
+
+  insert into public.chats (title, created_by, chat_type, is_public)
+  values (trim(p_title), account_id, 'group', false)
+  returning id into chat_id;
+
+  insert into public.chat_members (chat_id, user_id, role)
+  values (chat_id, account_id, 'admin');
+
+  foreach member_id in array coalesce(p_member_ids, '{}'::uuid[]) loop
+    if member_id <> account_id then
+      insert into public.chat_members (chat_id, user_id, role)
+      values (chat_id, member_id, 'member')
+      on conflict do nothing;
+    end if;
+  end loop;
+
+  return chat_id;
+end;
+$$;
+
+create or replace function public.send_chat_notice(
+  p_chat_id uuid,
+  p_body text
+)
+returns public.messages
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  account_id uuid := auth.uid();
+  target_chat public.chats%rowtype;
+  created_message public.messages%rowtype;
+  can_post boolean := false;
+begin
+  select * into target_chat from public.chats where id = p_chat_id;
+  if target_chat.id is null or nullif(trim(p_body), '') is null then
+    raise exception 'Chat and notice body are required';
+  end if;
+
+  if target_chat.crew_id is not null then
+    select exists (
+      select 1 from public.crews
+      left join public.crew_members
+        on crew_members.crew_id = crews.id
+        and crew_members.user_id = account_id
+      where crews.id = target_chat.crew_id
+        and (
+          crews.owner_id = account_id
+          or crew_members.role = 'manager'
+        )
+    ) into can_post;
+  else
+    select exists (
+      select 1 from public.chat_members
+      where chat_id = p_chat_id
+        and user_id = account_id
+        and role = 'admin'
+    ) into can_post;
+  end if;
+
+  if not can_post then raise exception 'Notice permission required'; end if;
+
+  update public.messages
+  set is_pinned = false
+  where chat_id = p_chat_id and is_pinned;
+
+  insert into public.messages (
+    chat_id, sender_id, body, message_type, is_pinned
+  ) values (
+    p_chat_id, account_id, trim(p_body), 'notice', true
+  ) returning * into created_message;
+  return created_message;
+end;
+$$;
+
+create or replace function public.create_chat_run_recruitment(
+  p_chat_id uuid,
+  p_title text,
+  p_meeting_place text,
+  p_course_summary text,
+  p_starts_at timestamptz,
+  p_max_members integer,
+  p_join_policy text
+)
+returns setof public.group_runs
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  account_id uuid := auth.uid();
+  target_chat public.chats%rowtype;
+  created_run public.group_runs%rowtype;
+begin
+  if account_id is null then raise exception 'Authentication required'; end if;
+  if p_max_members not between 2 and 100 then raise exception 'Invalid capacity'; end if;
+  if p_join_policy not in ('first_come', 'approval') then
+    raise exception 'Invalid join policy';
+  end if;
+  if p_starts_at <= now() then raise exception 'Start time must be in the future'; end if;
+
+  select * into target_chat from public.chats where id = p_chat_id;
+  if target_chat.id is null or not exists (
+    select 1 from public.chat_members
+    where chat_id = p_chat_id and user_id = account_id
+  ) then
+    raise exception 'Chat membership required';
+  end if;
+
+  insert into public.group_runs (
+    host_id, title, meeting_place, starts_at, max_members, crew_id,
+    course_summary, join_policy, recruitment_chat_id, run_mode, status
+  ) values (
+    account_id, trim(p_title), trim(p_meeting_place), p_starts_at,
+    p_max_members, target_chat.crew_id, nullif(trim(p_course_summary), ''),
+    p_join_policy, p_chat_id, 'scheduled', 'planning'
+  ) returning * into created_run;
+
+  insert into public.group_run_members (group_run_id, user_id)
+  values (created_run.id, account_id);
+
+  insert into public.messages (
+    chat_id, sender_id, body, message_type, payload
+  ) values (
+    p_chat_id,
+    account_id,
+    created_run.title,
+    'run_recruitment',
+    jsonb_build_object(
+      'group_run_id', created_run.id,
+      'meeting_place', created_run.meeting_place,
+      'course_summary', created_run.course_summary,
+      'starts_at', created_run.starts_at,
+      'max_members', created_run.max_members,
+      'join_policy', created_run.join_policy,
+      'host_id', created_run.host_id
+    )
+  );
+
+  return next created_run;
+end;
+$$;
+
+create or replace function public.invite_runner_to_group_run(
+  p_group_run_id uuid,
+  p_target_user_id uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  inviter uuid := auth.uid();
+  target_run public.group_runs%rowtype;
+  target_chat public.chats%rowtype;
+  can_invite boolean := false;
+begin
+  if inviter is null then raise exception 'Authentication required'; end if;
+  if inviter = p_target_user_id then raise exception 'Cannot invite yourself'; end if;
+
+  select * into target_run
+  from public.group_runs
+  where id = p_group_run_id
+    and status in ('planning', 'ready', 'running')
+  for update;
+  if target_run.id is null then raise exception 'Together run is closed'; end if;
+
+  can_invite := target_run.host_id = inviter;
+
+  if not can_invite and target_run.recruitment_chat_id is not null then
+    select * into target_chat
+    from public.chats
+    where id = target_run.recruitment_chat_id;
+
+    if target_chat.crew_id is not null then
+      select exists (
+        select 1 from public.crews
+        left join public.crew_members
+          on crew_members.crew_id = crews.id
+          and crew_members.user_id = inviter
+        where crews.id = target_chat.crew_id
+          and (
+            crews.owner_id = inviter
+            or crew_members.role = 'manager'
+          )
+      ) into can_invite;
+    else
+      select exists (
+        select 1 from public.chat_members
+        where chat_id = target_chat.id
+          and user_id = inviter
+          and role = 'admin'
+      ) into can_invite;
+    end if;
+  end if;
+
+  if not can_invite then
+    raise exception 'Only the host or an authorized chat manager can invite';
+  end if;
+
+  if target_run.crew_id is not null and exists (
+    select 1 from public.crew_blocks
+    where crew_id = target_run.crew_id
+      and user_id = p_target_user_id
+  ) then
+    raise exception 'The runner is blocked from this crew';
+  end if;
+
+  perform set_config('rungether.invite_override', 'on', true);
+  insert into public.group_run_members (group_run_id, user_id)
+  values (target_run.id, p_target_user_id)
+  on conflict do nothing;
+  perform set_config('rungether.invite_override', 'off', true);
+
+  if target_run.recruitment_chat_id is not null then
+    insert into public.chat_members (chat_id, user_id, role)
+    values (target_run.recruitment_chat_id, p_target_user_id, 'member')
+    on conflict do nothing;
+
+    insert into public.messages (
+      chat_id, sender_id, body, message_type, payload
+    ) values (
+      target_run.recruitment_chat_id,
+      inviter,
+      '함께 러닝에 추가 초대했습니다.',
+      'system',
+      jsonb_build_object(
+        'group_run_id', target_run.id,
+        'invited_user_id', p_target_user_id,
+        'capacity_override', true
+      )
+    );
+  end if;
+
+  insert into public.notifications (user_id, type, payload)
+  values (
+    p_target_user_id,
+    'group_run_invite',
+    jsonb_build_object(
+      'group_run_id', target_run.id,
+      'inviter_id', inviter,
+      'started', target_run.status = 'running'
+    )
+  );
+end;
+$$;
+
+create or replace function public.join_chat_run_recruitment(p_group_run_id uuid)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  account_id uuid := auth.uid();
+  target_run public.group_runs%rowtype;
+begin
+  select * into target_run
+  from public.group_runs
+  where id = p_group_run_id and status in ('planning', 'ready')
+  for update;
+  if target_run.id is null then raise exception 'Recruitment is closed'; end if;
+
+  if target_run.join_policy = 'first_come' then
+    insert into public.group_run_members (group_run_id, user_id)
+    values (target_run.id, account_id)
+    on conflict do nothing;
+    return 'joined';
+  end if;
+
+  insert into public.group_run_join_requests (
+    group_run_id, requester_id, status
+  ) values (
+    target_run.id, account_id, 'pending'
+  )
+  on conflict (group_run_id, requester_id)
+  do update set status = 'pending', requested_at = now(), decided_at = null;
+
+  insert into public.messages (
+    chat_id, sender_id, body, message_type, payload
+  )
+  select
+    target_run.recruitment_chat_id,
+    account_id,
+    '함께 러닝 참가 승인을 요청했습니다.',
+    'system',
+    jsonb_build_object(
+      'group_run_id', target_run.id,
+      'requester_id', account_id
+    )
+  where target_run.recruitment_chat_id is not null;
+  return 'pending';
+end;
+$$;
+
+create or replace function public.decide_group_run_request(
+  p_request_id uuid,
+  p_decision text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  account_id uuid := auth.uid();
+  target_request public.group_run_join_requests%rowtype;
+  target_run public.group_runs%rowtype;
+begin
+  if p_decision not in ('accepted', 'rejected') then
+    raise exception 'Invalid decision';
+  end if;
+
+  select * into target_request
+  from public.group_run_join_requests
+  where id = p_request_id and status = 'pending'
+  for update;
+  select * into target_run
+  from public.group_runs
+  where id = target_request.group_run_id
+  for update;
+
+  if target_run.host_id <> account_id then
+    raise exception 'Only the recruitment host can decide';
+  end if;
+
+  update public.group_run_join_requests
+  set status = p_decision, decided_at = now()
+  where id = target_request.id;
+
+  if p_decision = 'accepted' then
+    insert into public.group_run_members (group_run_id, user_id)
+    values (target_run.id, target_request.requester_id)
+    on conflict do nothing;
+  end if;
+end;
+$$;
+
+revoke all on function public.create_group_chat(text, uuid[]) from public;
+revoke all on function public.send_chat_notice(uuid, text) from public;
+revoke all on function public.create_chat_run_recruitment(
+  uuid, text, text, text, timestamptz, integer, text
+) from public;
+revoke all on function public.join_chat_run_recruitment(uuid) from public;
+revoke all on function public.decide_group_run_request(uuid, text) from public;
+revoke all on function public.invite_runner_to_group_run(uuid, uuid) from public;
+grant execute on function public.create_group_chat(text, uuid[]) to authenticated;
+grant execute on function public.send_chat_notice(uuid, text) to authenticated;
+grant execute on function public.create_chat_run_recruitment(
+  uuid, text, text, text, timestamptz, integer, text
+) to authenticated;
+grant execute on function public.join_chat_run_recruitment(uuid) to authenticated;
+grant execute on function public.decide_group_run_request(uuid, text) to authenticated;
+grant execute on function public.invite_runner_to_group_run(uuid, uuid) to authenticated;
+
+-- Crew activity region
+alter table public.crews
+  add column if not exists region_level1 text,
+  add column if not exists region_level2 text;
+
+create index if not exists crews_activity_region_idx
+on public.crews (region_level1, region_level2);
+
+create or replace function public.require_new_crew_activity_region()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if nullif(trim(new.region_level1), '') is null
+    or nullif(trim(new.region_level2), '') is null then
+    raise exception 'Crew activity region is required';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists require_new_crew_activity_region on public.crews;
+create trigger require_new_crew_activity_region
+before insert on public.crews
+for each row execute procedure public.require_new_crew_activity_region();

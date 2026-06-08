@@ -23,6 +23,7 @@ import {
   MapPin,
   Menu,
   MessageCircle,
+  Moon,
   Navigation,
   Pause,
   Play,
@@ -33,11 +34,13 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  Sun,
   Trophy,
   Trash2,
   UserPlus,
   UserRound,
   Users,
+  Volume2,
   X
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -53,6 +56,11 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  formatKoreanRegion,
+  getKoreanLevel2Regions,
+  KOREAN_REGIONS
+} from "@/lib/korean-regions";
 import { getSupabaseClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
@@ -73,6 +81,19 @@ type Profile = {
   current_streak: number;
   longest_streak: number;
   onboarding_completed: boolean;
+  theme_mode?: "system" | "light" | "dark";
+  default_home?: "running" | "feed";
+  weight_kg?: number | null;
+  voice_enabled?: boolean;
+  voice_mix_mode?: "duck" | "mix";
+  voice_distance_interval_m?: number;
+  voice_time_interval_min?: number;
+  voice_read_distance?: boolean;
+  voice_read_split_pace?: boolean;
+  voice_read_total_time?: boolean;
+  voice_read_goal_progress?: boolean;
+  voice_volume?: number;
+  voice_rate?: number;
 };
 
 type FeedPost = {
@@ -178,6 +199,8 @@ type Crew = {
   meeting_place: string | null;
   name: string;
   owner_id: string;
+  region_level1: string | null;
+  region_level2: string | null;
 };
 
 type CrewMember = {
@@ -317,6 +340,8 @@ const navItems: Array<{ id: View; label: string; icon: typeof Home }> = [
   { id: "chat", label: "채팅", icon: MessageCircle },
   { id: "profile", label: "마이", icon: UserRound }
 ];
+const profileSelectFields =
+  "id,handle,display_name,bio,avatar_url,total_distance_m,is_private,experience_points,level,current_streak,longest_streak,onboarding_completed,theme_mode,default_home,weight_kg,voice_enabled,voice_mix_mode,voice_distance_interval_m,voice_time_interval_min,voice_read_distance,voice_read_split_pace,voice_read_total_time,voice_read_goal_progress,voice_volume,voice_rate";
 
 function distanceBetween(a: MapPoint, b: MapPoint) {
   const radius = 6371000;
@@ -331,6 +356,53 @@ function distanceBetween(a: MapPoint, b: MapPoint) {
       Math.sin(longitude / 2) ** 2;
 
   return 2 * radius * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+}
+
+function buildRunSplits(points: MapPoint[]) {
+  if (points.length < 2) {
+    return [];
+  }
+
+  const splits: Array<{
+    split_index: number;
+    distance_m: number;
+    duration_s: number;
+    pace_s: number;
+  }> = [];
+  let splitDistance = 0;
+  let splitStart = new Date(points[0].recordedAt ?? Date.now()).getTime();
+  let splitIndex = 1;
+
+  for (let index = 1; index < points.length; index += 1) {
+    splitDistance += distanceBetween(points[index - 1], points[index]);
+    if (splitDistance < 1000) {
+      continue;
+    }
+    const splitEnd = new Date(points[index].recordedAt ?? Date.now()).getTime();
+    const duration = Math.max(1, Math.round((splitEnd - splitStart) / 1000));
+    splits.push({
+      split_index: splitIndex,
+      distance_m: 1000,
+      duration_s: duration,
+      pace_s: duration
+    });
+    splitIndex += 1;
+    splitDistance -= 1000;
+    splitStart = splitEnd;
+  }
+
+  if (splitDistance >= 100) {
+    const splitEnd = new Date(points.at(-1)?.recordedAt ?? Date.now()).getTime();
+    const duration = Math.max(1, Math.round((splitEnd - splitStart) / 1000));
+    splits.push({
+      split_index: splitIndex,
+      distance_m: Math.round(splitDistance),
+      duration_s: duration,
+      pace_s: Math.round(duration / (splitDistance / 1000))
+    });
+  }
+
+  return splits;
 }
 
 function formatDuration(totalSeconds: number) {
@@ -680,7 +752,7 @@ export function RungetherApp() {
       ] =
         await Promise.all([
           (supabase.from("users") as any)
-            .select("id,handle,display_name,bio,avatar_url,total_distance_m,is_private,experience_points,level,current_streak,longest_streak,onboarding_completed")
+            .select(profileSelectFields)
             .order("experience_points", { ascending: false })
             .limit(100),
           (supabase.from("posts") as any)
@@ -720,7 +792,7 @@ export function RungetherApp() {
             .order("created_at", { ascending: true })
             .limit(500),
           (supabase.from("crews") as any)
-            .select("id,owner_id,name,description,is_private,meeting_place,image_url,experience_points,guest_recruiting,guest_default_hours")
+            .select("id,owner_id,name,description,is_private,meeting_place,image_url,experience_points,guest_recruiting,guest_default_hours,region_level1,region_level2")
             .order("experience_points", { ascending: false })
             .limit(500),
           (supabase.from("crew_members") as any)
@@ -849,7 +921,7 @@ export function RungetherApp() {
       }
 
       const { data } = await (supabase!.from("users") as any)
-        .select("id,handle,display_name,bio,avatar_url,total_distance_m,is_private,experience_points,level,current_streak,longest_streak,onboarding_completed")
+        .select(profileSelectFields)
         .eq("id", user.id)
         .maybeSingle();
 
@@ -859,6 +931,7 @@ export function RungetherApp() {
       }
 
       setProfile(data as Profile);
+      setActiveView(data.default_home === "feed" ? "feed" : "home");
       setAuthLoading(false);
       await (supabase as any).rpc("finalize_crew_monthly_season");
       void loadAppData(user.id);
@@ -925,6 +998,15 @@ export function RungetherApp() {
       void supabase.removeChannel(channel);
     };
   }, [authUser?.id, loadAppData, supabase]);
+
+  useEffect(() => {
+    const mode = profile?.theme_mode ?? "system";
+    if (mode === "system") {
+      delete document.documentElement.dataset.theme;
+    } else {
+      document.documentElement.dataset.theme = mode;
+    }
+  }, [profile?.theme_mode]);
 
   useEffect(() => {
     if (!isRunning || isPaused) {
@@ -1126,7 +1208,6 @@ export function RungetherApp() {
     const duration = Math.max(1, elapsedSeconds);
     const averagePace =
       distanceM > 0 ? Math.round(duration / (distanceM / 1000)) : null;
-    const calories = Math.round((distanceM / 1000) * 62);
     let routeImageUrl: string | null = null;
     const routeImage = await createRouteShareImage(
       routePoints,
@@ -1149,50 +1230,60 @@ export function RungetherApp() {
           .getPublicUrl(routeImagePath).data.publicUrl;
       }
     }
-    const { data, error } = await (supabase.from("runs") as any)
-      .insert({
-        user_id: authUser.id,
-        title: "오늘의 러닝",
-        started_at: new Date(runStartedAt).toISOString(),
-        ended_at: new Date(endedAt).toISOString(),
-        distance_m: Math.round(distanceM),
-        duration_s: duration,
-        average_pace_s: averagePace,
-        calories,
-        crew_id: runCrewId || null,
-        route_image_url: routeImageUrl,
-        visibility: "friends"
-      })
-      .select("id,user_id,crew_id,title,distance_m,duration_s,average_pace_s,route_image_url,started_at,visibility,xp_earned,streak_day")
-      .single();
+    const gpsQualitySamples = routePoints
+      .map((point) => point.accuracy)
+      .filter((value): value is number => typeof value === "number");
+    const gpsQuality = gpsQualitySamples.length
+      ? gpsQualitySamples.reduce((sum, value) => sum + value, 0) /
+        gpsQualitySamples.length
+      : null;
+    const splitRows = buildRunSplits(routePoints);
+    const { data, error } = await (supabase as any).rpc("complete_gps_run", {
+      p_started_at: new Date(runStartedAt).toISOString(),
+      p_ended_at: new Date(endedAt).toISOString(),
+      p_distance_m: Math.round(distanceM),
+      p_duration_s: duration,
+      p_moving_duration_s: duration,
+      p_paused_duration_s: 0,
+      p_average_pace_s: averagePace,
+      p_title: "오늘의 러닝",
+      p_visibility: "friends",
+      p_crew_id: runCrewId || null,
+      p_goal_type: "open",
+      p_goal_value: null,
+      p_gps_quality: gpsQuality,
+      p_platform: "web",
+      p_route_visible: true,
+      p_completion_key: crypto.randomUUID(),
+      p_tracks: routePoints.map((point) => ({
+        latitude: point.latitude,
+        longitude: point.longitude,
+        recorded_at: point.recordedAt ?? new Date().toISOString(),
+        speed_mps: point.speedMps,
+        accuracy_m: point.accuracy ?? null,
+        altitude_m: null,
+        heading_deg: null,
+        is_mocked: false
+      })),
+      p_splits: splitRows,
+      p_route_image_url: routeImageUrl
+    });
 
     if (error) {
       showToast("러닝 저장에 실패했습니다. Supabase SQL 정책을 확인해 주세요.");
       return;
     }
-
-    if (routePoints.length) {
-      await (supabase.from("run_tracks") as any).insert(
-        routePoints.map((point) => ({
-          run_id: data.id,
-          latitude: point.latitude,
-          longitude: point.longitude,
-          recorded_at: point.recordedAt ?? new Date().toISOString(),
-          speed_mps: point.speedMps
-        }))
-      );
-    }
-
-    setRuns((current) => [data as RunRecord, ...current]);
+    const savedRun = (Array.isArray(data) ? data[0] : data) as RunRecord;
+    setRuns((current) => [savedRun, ...current]);
     const { data: updatedProfile } = await (supabase.from("users") as any)
-      .select("id,handle,display_name,bio,avatar_url,total_distance_m,is_private,experience_points,level,current_streak,longest_streak,onboarding_completed")
+      .select(profileSelectFields)
       .eq("id", authUser.id)
       .single();
     if (updatedProfile) {
       setProfile(updatedProfile as Profile);
     }
     showToast(
-      `러닝 저장 완료 · +${Number(data.xp_earned ?? 0)} XP · ${Number(data.streak_day ?? 1)}일 연속`
+      `러닝 저장 완료 · +${Number(savedRun.xp_earned ?? 0)} XP · ${Number(savedRun.streak_day ?? 1)}일 연속`
     );
   }
 
@@ -1231,6 +1322,21 @@ export function RungetherApp() {
     await supabase?.auth.signOut();
     setActiveView("home");
     showToast("로그아웃했습니다.");
+  }
+
+  async function updateProfilePreferences(values: Partial<Profile>) {
+    if (!supabase || !authUser || !profile) {
+      return;
+    }
+    const { error } = await (supabase.from("users") as any)
+      .update({ ...values, updated_at: new Date().toISOString() })
+      .eq("id", authUser.id);
+    if (error) {
+      showToast("설정을 저장하지 못했습니다.");
+      return;
+    }
+    setProfile({ ...profile, ...values });
+    showToast("설정을 저장했습니다.");
   }
 
   async function sendEmergencyReport() {
@@ -1514,6 +1620,7 @@ export function RungetherApp() {
               onFollowers={() => setActiveView("friends")}
               onShareRun={shareRun}
               onSignOut={signOut}
+              onPreferenceChange={updateProfilePreferences}
               onVisibilityChange={updateRunVisibility}
             />
           ) : null}
@@ -3741,6 +3848,10 @@ function CrewView({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [meetingPlace, setMeetingPlace] = useState("");
+  const [regionLevel1, setRegionLevel1] = useState("");
+  const [regionLevel2, setRegionLevel2] = useState("");
+  const [searchRegionLevel1, setSearchRegionLevel1] = useState("");
+  const [searchRegionLevel2, setSearchRegionLevel2] = useState("");
   const [privateCrew, setPrivateCrew] = useState(false);
   const [runCrewId, setRunCrewId] = useState("");
   const [runTitle, setRunTitle] = useState("");
@@ -3771,6 +3882,18 @@ function CrewView({
   const hasPrimaryCrew = myCrews.length > 0 || ownedCrews.length > 0;
   const normalizedCrewSearch = crewSearch.trim().toLocaleLowerCase("ko-KR");
   const visibleCrews = crews.filter((crew) => {
+    if (
+      searchRegionLevel1 &&
+      crew.region_level1 !== searchRegionLevel1
+    ) {
+      return false;
+    }
+    if (
+      searchRegionLevel2 &&
+      crew.region_level2 !== searchRegionLevel2
+    ) {
+      return false;
+    }
     if (!normalizedCrewSearch) {
       return true;
     }
@@ -3779,6 +3902,8 @@ function CrewView({
       crew.name,
       crew.description,
       crew.meeting_place,
+      crew.region_level1,
+      crew.region_level2,
       owner?.handle,
       owner?.display_name
     ].some((value) =>
@@ -3916,11 +4041,20 @@ function CrewView({
 
   async function createCrew(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!authUser || !supabase || !name.trim() || hasPrimaryCrew) {
+    if (
+      !authUser ||
+      !supabase ||
+      !name.trim() ||
+      !regionLevel1 ||
+      !regionLevel2 ||
+      hasPrimaryCrew
+    ) {
       onToast(
         hasPrimaryCrew
           ? "소속 크루는 하나만 선택할 수 있습니다."
-          : "크루 이름을 입력해 주세요."
+          : !name.trim()
+            ? "크루 이름을 입력해 주세요."
+            : "크루 활동 지역을 선택해 주세요."
       );
       return;
     }
@@ -3930,9 +4064,11 @@ function CrewView({
         is_private: privateCrew,
         meeting_place: meetingPlace.trim() || null,
         name: name.trim(),
-        owner_id: authUser.id
+        owner_id: authUser.id,
+        region_level1: regionLevel1,
+        region_level2: regionLevel2
       })
-      .select("id,owner_id,name,description,is_private,meeting_place,image_url,experience_points,guest_recruiting,guest_default_hours")
+      .select("id,owner_id,name,description,is_private,meeting_place,image_url,experience_points,guest_recruiting,guest_default_hours,region_level1,region_level2")
       .single();
     if (error) {
       onToast("크루를 만들지 못했습니다.");
@@ -3956,6 +4092,8 @@ function CrewView({
     setName("");
     setDescription("");
     setMeetingPlace("");
+    setRegionLevel1("");
+    setRegionLevel2("");
     setShowCreate(false);
     onToast("새 러닝크루를 만들었습니다.");
   }
@@ -4493,6 +4631,44 @@ function CrewView({
                 placeholder="크루 이름"
                 value={name}
               />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-1 text-xs font-black text-muted">
+                  광역 활동 지역
+                  <select
+                    className="h-11 rounded-md border border-border bg-white px-3 text-sm font-bold text-ink outline-none focus:border-primary"
+                    onChange={(event) => {
+                      setRegionLevel1(event.target.value);
+                      setRegionLevel2("");
+                    }}
+                    required
+                    value={regionLevel1}
+                  >
+                    <option value="">시·도 선택</option>
+                    {KOREAN_REGIONS.map((region) => (
+                      <option key={region.level1} value={region.level1}>
+                        {region.level1}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-xs font-black text-muted">
+                  세부 활동 지역
+                  <select
+                    className="h-11 rounded-md border border-border bg-white px-3 text-sm font-bold text-ink outline-none focus:border-primary disabled:bg-slate-100"
+                    disabled={!regionLevel1}
+                    onChange={(event) => setRegionLevel2(event.target.value)}
+                    required
+                    value={regionLevel2}
+                  >
+                    <option value="">시·군·구 선택</option>
+                    {getKoreanLevel2Regions(regionLevel1).map((region) => (
+                      <option key={region} value={region}>
+                        {region}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               <input
                 className="h-11 rounded-md border border-border px-3 text-sm font-semibold outline-none focus:border-primary"
                 maxLength={100}
@@ -4518,6 +4694,40 @@ function CrewView({
               <Button type="submit">크루 만들기</Button>
             </form>
           ) : null}
+          <div className="mb-3 grid gap-2 sm:grid-cols-2">
+            <select
+              aria-label="광역 지역으로 크루 검색"
+              className="h-11 rounded-md border border-border bg-white px-3 text-sm font-bold text-ink outline-none focus:border-primary"
+              onChange={(event) => {
+                setSearchRegionLevel1(event.target.value);
+                setSearchRegionLevel2("");
+              }}
+              value={searchRegionLevel1}
+            >
+              <option value="">전국</option>
+              {KOREAN_REGIONS.map((region) => (
+                <option key={region.level1} value={region.level1}>
+                  {region.level1}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="시군구로 크루 검색"
+              className="h-11 rounded-md border border-border bg-white px-3 text-sm font-bold text-ink outline-none focus:border-primary disabled:bg-slate-100"
+              disabled={!searchRegionLevel1}
+              onChange={(event) => setSearchRegionLevel2(event.target.value)}
+              value={searchRegionLevel2}
+            >
+              <option value="">
+                {searchRegionLevel1 ? "전체 시·군·구" : "먼저 시·도 선택"}
+              </option>
+              {getKoreanLevel2Regions(searchRegionLevel1).map((region) => (
+                <option key={region} value={region}>
+                  {region}
+                </option>
+              ))}
+            </select>
+          </div>
           <label className="mb-4 flex h-11 items-center gap-2 rounded-md border border-border px-3 focus-within:border-primary">
             <Search className="shrink-0 text-muted" size={18} />
             <input
@@ -4577,7 +4787,11 @@ function CrewView({
                   </p>
                   <p className="mt-2 flex items-center gap-1 text-xs font-bold text-muted">
                     <MapPin size={14} />
-                    {crew.meeting_place || "활동 장소 미정"}
+                    {formatKoreanRegion(
+                      crew.region_level1,
+                      crew.region_level2
+                    ) || "활동 지역 미등록"}
+                    {crew.meeting_place ? ` · ${crew.meeting_place}` : ""}
                   </p>
                   {membership ? (
                     <Button
@@ -6272,6 +6486,7 @@ function ProfileView({
   onShareRun,
   onSignOut
   ,
+  onPreferenceChange,
   onVisibilityChange
 }: {
   authUser: User | null;
@@ -6286,6 +6501,7 @@ function ProfileView({
   onFollowers: () => void;
   onShareRun: (runId: string) => void;
   onSignOut: () => void;
+  onPreferenceChange: (values: Partial<Profile>) => void;
   onVisibilityChange: (runId: string, visibility: Visibility) => void;
 }) {
   const [tab, setTab] = useState<"posts" | "runs">("posts");
@@ -6432,9 +6648,9 @@ function ProfileView({
     ];
 
     return (
-      <section className="fixed inset-0 z-[140] overflow-y-auto bg-[#0b1014] text-white">
+      <section className="fixed inset-0 z-[140] overflow-y-auto bg-surface text-ink">
         <div className="mx-auto min-h-screen max-w-[760px]">
-          <header className="sticky top-0 z-10 grid h-16 grid-cols-[48px_1fr_48px] items-center border-b border-white/10 bg-[#0b1014]/95 px-3 backdrop-blur">
+          <header className="sticky top-0 z-10 grid h-16 grid-cols-[48px_1fr_48px] items-center border-b border-border bg-surface/95 px-3 backdrop-blur">
             <button
               aria-label="설정 닫기"
               className="grid size-11 place-items-center"
@@ -6448,25 +6664,118 @@ function ProfileView({
           </header>
 
           <div className="p-4">
-            <label className="flex h-12 items-center gap-3 rounded-md bg-white/10 px-4 text-zinc-400">
+            <label className="flex h-12 items-center gap-3 rounded-md border border-border bg-white px-4 text-muted">
               <Search size={21} />
               <input
-                className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-white outline-none"
+                className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-ink outline-none"
                 placeholder="검색"
               />
             </label>
           </div>
 
+          <section className="border-b-8 border-border py-3">
+            <h3 className="px-5 py-3 text-sm font-black text-muted">앱 환경</h3>
+            <label className="flex min-h-16 items-center gap-4 px-5 py-3">
+              {profile.theme_mode === "dark" ? (
+                <Moon className="shrink-0" size={25} />
+              ) : (
+                <Sun className="shrink-0" size={25} />
+              )}
+              <span className="min-w-0 flex-1">
+                <span className="block text-base font-bold">화면 테마</span>
+                <span className="mt-1 block text-xs font-semibold text-muted">
+                  시스템 설정 또는 고정 테마를 사용합니다.
+                </span>
+              </span>
+              <select
+                className="h-10 rounded-md border border-border bg-white px-3 text-sm font-bold"
+                onChange={(event) =>
+                  onPreferenceChange({
+                    theme_mode: event.target.value as Profile["theme_mode"]
+                  })
+                }
+                value={profile.theme_mode ?? "system"}
+              >
+                <option value="system">시스템</option>
+                <option value="light">라이트</option>
+                <option value="dark">다크</option>
+              </select>
+            </label>
+            <label className="flex min-h-16 items-center gap-4 px-5 py-3">
+              <Home className="shrink-0" size={25} />
+              <span className="min-w-0 flex-1">
+                <span className="block text-base font-bold">기본 첫 화면</span>
+                <span className="mt-1 block text-xs font-semibold text-muted">
+                  앱을 열었을 때 먼저 볼 화면입니다.
+                </span>
+              </span>
+              <select
+                className="h-10 rounded-md border border-border bg-white px-3 text-sm font-bold"
+                onChange={(event) =>
+                  onPreferenceChange({
+                    default_home: event.target.value as Profile["default_home"]
+                  })
+                }
+                value={profile.default_home ?? "running"}
+              >
+                <option value="running">러닝 홈</option>
+                <option value="feed">SNS 피드</option>
+              </select>
+            </label>
+          </section>
+
+          <section className="border-b-8 border-border py-3">
+            <h3 className="px-5 py-3 text-sm font-black text-muted">음성 안내</h3>
+            <label className="flex min-h-16 items-center gap-4 px-5 py-3">
+              <Activity className="shrink-0" size={25} />
+              <span className="min-w-0 flex-1">
+                <span className="block text-base font-bold">러닝 음성 안내</span>
+                <span className="mt-1 block text-xs font-semibold text-muted">
+                  모바일 러닝 중 거리와 구간 정보를 읽습니다.
+                </span>
+              </span>
+              <input
+                checked={profile.voice_enabled ?? true}
+                className="size-5 accent-emerald-600"
+                onChange={(event) =>
+                  onPreferenceChange({ voice_enabled: event.target.checked })
+                }
+                type="checkbox"
+              />
+            </label>
+            <label className="flex min-h-16 items-center gap-4 px-5 py-3">
+              <Volume2 className="shrink-0" size={25} />
+              <span className="min-w-0 flex-1">
+                <span className="block text-base font-bold">다른 앱 소리</span>
+                <span className="mt-1 block text-xs font-semibold text-muted">
+                  음악이나 영상 재생을 멈추지 않습니다.
+                </span>
+              </span>
+              <select
+                className="h-10 rounded-md border border-border bg-white px-3 text-sm font-bold"
+                onChange={(event) =>
+                  onPreferenceChange({
+                    voice_mix_mode: event.target.value as "duck" | "mix"
+                  })
+                }
+                value={profile.voice_mix_mode ?? "duck"}
+              >
+                <option value="duck">잠깐 낮추기</option>
+                <option value="mix">그대로 겹치기</option>
+              </select>
+            </label>
+          </section>
+
           {settingsSections.map((section) => (
-            <section className="border-b-8 border-white/10 py-3" key={section.title}>
-              <h3 className="px-5 py-3 text-sm font-black text-zinc-400">
+            <section className="border-b-8 border-border py-3" key={section.title}>
+              <h3 className="px-5 py-3 text-sm font-black text-muted">
                 {section.title}
               </h3>
               {section.items.map((item) => {
                 const Icon = item.icon;
                 return (
                   <button
-                    className="flex w-full items-center gap-4 px-5 py-4 text-left hover:bg-white/5"
+                    className="flex w-full items-center gap-4 px-5 py-4 text-left hover:bg-black/5"
                     key={item.label}
                     onClick={item.onClick}
                     type="button"
@@ -6474,11 +6783,11 @@ function ProfileView({
                     <Icon className="shrink-0" size={25} />
                     <span className="min-w-0 flex-1">
                       <span className="block text-base font-bold">{item.label}</span>
-                      <span className="mt-1 block truncate text-xs font-semibold text-zinc-500">
+                      <span className="mt-1 block truncate text-xs font-semibold text-muted">
                         {item.description}
                       </span>
                     </span>
-                    <ChevronRight className="text-zinc-500" size={20} />
+                    <ChevronRight className="text-muted" size={20} />
                   </button>
                 );
               })}
@@ -6487,7 +6796,7 @@ function ProfileView({
 
           <section className="grid gap-1 px-5 py-7">
             <button
-              className="flex min-h-12 items-center gap-3 text-left text-blue-400"
+              className="flex min-h-12 items-center gap-3 text-left text-primary"
               onClick={onSignOut}
               type="button"
             >
@@ -6495,14 +6804,14 @@ function ProfileView({
               <span className="font-bold">로그아웃</span>
             </button>
             <button
-              className="flex min-h-12 items-center gap-3 text-left text-rose-400"
+              className="flex min-h-12 items-center gap-3 text-left text-danger"
               onClick={() => setDeleteOpen(true)}
               type="button"
             >
               <Trash2 size={22} />
               <span className="font-bold">계정 영구 삭제</span>
             </button>
-            <p className="mt-2 text-xs font-semibold leading-5 text-zinc-500">
+            <p className="mt-2 text-xs font-semibold leading-5 text-muted">
               계정을 삭제하면 게시물, 러닝 기록, 팔로우, DM, 크루 소속과 모든
               개인 랭킹 기록이 복구할 수 없게 삭제됩니다. 크루에 기여한 XP는
               익명 기록으로 남아 크루 XP가 내려가지 않습니다.
